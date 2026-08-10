@@ -10,9 +10,9 @@
     "web": "expo start --web"
   },
   "dependencies": {
-    "@chatx/config": "*",
-    "@chatx/types": "*",
-    "@chatx/validation": "*",
+    "@chatx/config": "file:../packages/config",
+    "@chatx/types": "file:../packages/types",
+    "@chatx/validation": "file:../packages/validation",
     "expo": "~50.0.14",
     "expo-router": "~3.4.8",
     "expo-status-bar": "~1.11.1",

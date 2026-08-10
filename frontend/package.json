@@ -9,9 +9,9 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@chatx/config": "*",
-    "@chatx/types": "*",
-    "@chatx/validation": "*",
+    "@chatx/config": "file:../packages/config",
+    "@chatx/types": "file:../packages/types",
+    "@chatx/validation": "file:../packages/validation",
     "@tanstack/react-query": "^5.28.4",
     "@supabase/supabase-js": "^2.39.8",
     "@supabase/ssr": "^0.1.0",
