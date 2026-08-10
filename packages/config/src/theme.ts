@@ -1,0 +1,130 @@
+/**
+ * ChatX Design System Tokens & Color Palette
+ * Derived from color-system.md (WCAG AA-validated HSL and Resolved Hex)
+ * Shared across Next.js web application and React Native / Expo mobile application.
+ */
+
+export const colors = {
+  primitives: {
+    slate: {
+      50: '#FAFBFC',
+      100: '#F3F4F7',
+      200: '#E4E7EC',
+      300: '#CDD1DA',
+      400: '#A3AAB8',
+      500: '#667085',
+      600: '#525B6C',
+      700: '#424A5C',
+      800: '#2D3443',
+      900: '#1D212D',
+      950: '#0F121A',
+    },
+    primary: {
+      50: '#F1F2FA',
+      100: '#E3E4F6',
+      200: '#C7C9EC',
+      300: '#9EA2DE',
+      400: '#7176C6',
+      500: '#4C53B6',
+      600: '#3C419A',
+      700: '#2F337B',
+      800: '#252962',
+      900: '#1C1F4A',
+      950: '#10122E',
+    },
+    success: {
+      100: '#E8F5EE',
+      400: '#6BB38F',
+      500: '#347F5C',
+      900: '#123624',
+    },
+    warning: {
+      100: '#FEF7E8',
+      400: '#D6A351',
+      500: '#C0892A',
+      900: '#3D280B',
+    },
+    error: {
+      100: '#FDF0F1',
+      400: '#D76A71',
+      500: '#B93740',
+      900: '#3F1215',
+    },
+    info: {
+      100: '#EFF6FC',
+      400: '#68A2CF',
+      500: '#397CAC',
+      900: '#122D42',
+    },
+  },
+  semantic: {
+    light: {
+      background: '#FAFBFC',
+      foreground: '#1D212D',
+      card: '#FFFFFF',
+      cardForeground: '#1D212D',
+      popover: '#FFFFFF',
+      popoverForeground: '#1D212D',
+      primary: '#3C419A',
+      primaryForeground: '#FFFFFF',
+      secondary: '#F3F4F7',
+      secondaryForeground: '#1D212D',
+      muted: '#F3F4F7',
+      mutedForeground: '#667085',
+      accent: '#F1F2FA',
+      accentForeground: '#2F337B',
+      destructive: '#B93740',
+      destructiveForeground: '#FFFFFF',
+      success: '#347F5C',
+      successForeground: '#FFFFFF',
+      warning: '#C0892A',
+      warningForeground: '#1D212D', // Amber pairs with dark text for WCAG contrast
+      info: '#397CAC',
+      infoForeground: '#FFFFFF',
+      border: '#E4E7EC',
+      input: '#CDD1DA',
+      ring: '#4C53B6',
+    },
+    dark: {
+      background: '#0F121A', // Off-black canvas
+      foreground: '#FAFBFC',
+      card: '#1D212D',
+      cardForeground: '#FAFBFC',
+      popover: '#1D212D',
+      popoverForeground: '#FAFBFC',
+      primary: '#7176C6',
+      primaryForeground: '#0F121A',
+      secondary: '#2D3443',
+      secondaryForeground: '#FAFBFC',
+      muted: '#2D3443',
+      mutedForeground: '#A3AAB8',
+      accent: '#2D3443',
+      accentForeground: '#9EA2DE',
+      destructive: '#D76A71',
+      destructiveForeground: '#0F121A',
+      success: '#6BB38F',
+      successForeground: '#0F121A',
+      warning: '#D6A351',
+      warningForeground: '#0F121A',
+      info: '#68A2CF',
+      infoForeground: '#0F121A',
+      border: '#2D3443',
+      input: '#424A5C',
+      ring: '#7176C6',
+    },
+  },
+  presence: {
+    online: '#347F5C',
+    away: '#C0892A',
+    dnd: '#B93740',
+    offline: '#A3AAB8',
+  },
+  meetingStage: {
+    // Meeting tiles remain on dark slate background in both themes
+    background: '#0F121A',
+    surround: '#1D212D',
+    recordingDot: '#B93740',
+  },
+} as const;
+
+export type ThemeColors = typeof colors;

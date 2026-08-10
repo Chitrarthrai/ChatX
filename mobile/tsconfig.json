@@ -1,0 +1,12 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "@/*": ["./*"],
+      "@chatx/config": ["../packages/config/src/index.ts"],
+      "@chatx/types": ["../packages/types/src/index.ts"],
+      "@chatx/validation": ["../packages/validation/src/index.ts"]
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "chatx-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Industrial-Grade Video Conferencing & Collaboration Platform",
+  "workspaces": [
+    "frontend",
+    "mobile",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --prefix frontend",
+    "dev:mobile": "npm run start --prefix mobile",
+    "build:web": "npm run build --prefix frontend",
+    "lint": "npm run lint --prefix frontend",
+    "type-check": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

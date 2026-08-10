@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "ChatX",
+    "slug": "chatx",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "chatx",
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router"
+    ]
+  }
+}
