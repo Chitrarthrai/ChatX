@@ -70,7 +70,7 @@ export default function SavedMessagesPage() {
         const supabase = createClient();
         const authPromise = supabase.auth.getUser();
         const timeoutPromise = new Promise<any>((resolve) =>
-          setTimeout(() => resolve({ data: { user: null } }), 2500)
+          setTimeout(() => resolve({ data: { user: null } }), 1500)
         );
 
         const { data: { user } } = await Promise.race([authPromise, timeoutPromise]);

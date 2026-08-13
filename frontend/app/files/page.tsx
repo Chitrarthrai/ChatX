@@ -88,7 +88,7 @@ export default function FilesPage() {
         .order("created_at", { ascending: false });
 
       const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
-        setTimeout(() => resolve({ data: null, error: new Error("Request timeout") }), 3000)
+        setTimeout(() => resolve({ data: null, error: new Error("Request timeout") }), 1500)
       );
 
       const { data, error: dbError } = await Promise.race([queryPromise, timeoutPromise]);

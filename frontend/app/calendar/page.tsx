@@ -100,7 +100,7 @@ export default function CalendarPage() {
           .order("scheduled_start", { ascending: true });
 
         const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
-          setTimeout(() => resolve({ data: null, error: new Error("Request timeout") }), 2500)
+          setTimeout(() => resolve({ data: null, error: new Error("Request timeout") }), 1500)
         );
 
         const { data, error: fetchErr } = await Promise.race([queryPromise, timeoutPromise]);

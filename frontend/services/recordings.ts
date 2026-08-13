@@ -22,7 +22,7 @@ export async function fetchRecordings(): Promise<MeetingRecordingItem[]> {
       .order('created_at', { ascending: false });
 
     const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
-      setTimeout(() => resolve({ data: null, error: new Error('Timeout') }), 2500)
+      setTimeout(() => resolve({ data: null, error: new Error('Timeout') }), 1500)
     );
 
     const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
