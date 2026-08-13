@@ -121,6 +121,9 @@ export interface Message {
   isEdited: boolean;
   isPinned: boolean;
   isLocked: boolean;
+  status?: 'sent' | 'delivered' | 'read';
+  deliveredAt?: string;
+  readAt?: string;
   attachments?: MessageAttachment[];
   reactions?: MessageReaction[];
   sender?: UserProfile;
@@ -194,3 +197,27 @@ export interface AuditLog {
   ipAddress?: string;
   createdAt: string;
 }
+
+export interface SavedMessage {
+  id: string;
+  userId: string;
+  messageId: string;
+  note?: string;
+  savedAt: string;
+  message?: Message;
+}
+
+export type NotificationType = 'mention' | 'meeting_invite' | 'ai_summary' | 'system' | 'message';
+
+export interface AppNotification {
+  id: string;
+  userId: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  isRead: boolean;
+  linkUrl?: string;
+  createdAt: string;
+}
+
+

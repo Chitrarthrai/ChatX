@@ -1,7 +1,6 @@
 -- ChatX Initial PostgreSQL Schema Migration
 -- Section 30 Database Architecture
 
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- User Profiles (Linked to Supabase Auth.Users)
@@ -24,7 +23,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 
 -- Organizations
 CREATE TABLE IF NOT EXISTS public.organizations (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     slug TEXT NOT NULL UNIQUE,
     logo_url TEXT,
@@ -34,7 +33,7 @@ CREATE TABLE IF NOT EXISTS public.organizations (
 
 -- Organization Members
 CREATE TABLE IF NOT EXISTS public.organization_members (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'admin', 'member', 'guest')),
@@ -44,7 +43,7 @@ CREATE TABLE IF NOT EXISTS public.organization_members (
 
 -- Teams
 CREATE TABLE IF NOT EXISTS public.teams (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     description TEXT,
@@ -55,7 +54,7 @@ CREATE TABLE IF NOT EXISTS public.teams (
 
 -- Team Members
 CREATE TABLE IF NOT EXISTS public.team_members (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id UUID NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'moderator', 'member')),
@@ -65,7 +64,7 @@ CREATE TABLE IF NOT EXISTS public.team_members (
 
 -- Channels
 CREATE TABLE IF NOT EXISTS public.channels (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id UUID NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     topic TEXT,
@@ -77,7 +76,7 @@ CREATE TABLE IF NOT EXISTS public.channels (
 
 -- Conversations
 CREATE TABLE IF NOT EXISTS public.conversations (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     type TEXT NOT NULL CHECK (type IN ('direct', 'group', 'channel', 'saved')),
     name TEXT,
     avatar_url TEXT,
@@ -91,7 +90,7 @@ CREATE TABLE IF NOT EXISTS public.conversations (
 
 -- Conversation Members
 CREATE TABLE IF NOT EXISTS public.conversation_members (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id UUID NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     role TEXT DEFAULT 'member',
@@ -101,7 +100,7 @@ CREATE TABLE IF NOT EXISTS public.conversation_members (
 
 -- Messages
 CREATE TABLE IF NOT EXISTS public.messages (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id UUID NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
     sender_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     content TEXT NOT NULL,
@@ -117,7 +116,7 @@ CREATE TABLE IF NOT EXISTS public.messages (
 
 -- Message Attachments
 CREATE TABLE IF NOT EXISTS public.message_attachments (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     message_id UUID NOT NULL REFERENCES public.messages(id) ON DELETE CASCADE,
     file_url TEXT NOT NULL,
     file_name TEXT NOT NULL,
@@ -128,7 +127,7 @@ CREATE TABLE IF NOT EXISTS public.message_attachments (
 
 -- Meetings
 CREATE TABLE IF NOT EXISTS public.meetings (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title TEXT NOT NULL,
     description TEXT,
     host_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -146,7 +145,7 @@ CREATE TABLE IF NOT EXISTS public.meetings (
 
 -- Meeting Participants
 CREATE TABLE IF NOT EXISTS public.meeting_participants (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     meeting_id UUID NOT NULL REFERENCES public.meetings(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     role TEXT DEFAULT 'participant' CHECK (role IN ('host', 'co_host', 'participant')),
@@ -160,7 +159,7 @@ CREATE TABLE IF NOT EXISTS public.meeting_participants (
 
 -- Audit Logs
 CREATE TABLE IF NOT EXISTS public.audit_logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
     actor_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     action TEXT NOT NULL,
