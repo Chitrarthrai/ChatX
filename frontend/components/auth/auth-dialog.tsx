@@ -34,25 +34,50 @@ export function AuthDialog({ isOpen, onClose, defaultMode = "login", onSuccessLo
 
   if (!isOpen) return null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e && e.preventDefault) e.preventDefault();
     setError(null);
     setMessage(null);
     setLoading(true);
 
     try {
       if (mode === "login") {
-        const res = await signInWithEmail({ email, password });
-        const loggedUser = res?.user || { id: "u-101", email: email };
-        setLocalUser(loggedUser);
+        const cleanEmail = email.trim();
+        const cleanPassword = password.trim();
+
+        if (!cleanEmail || !cleanPassword) {
+          setError("Please enter your email address and password.");
+          setLoading(false);
+          return;
+        }
+
+        let res;
+        try {
+          res = await signInWithEmail({ email: cleanEmail, password: cleanPassword });
+        } catch (err: any) {
+          setError(err.message || "Invalid credentials. Please check your email and password.");
+          setLoading(false);
+          return;
+        }
+
+        const userObj = res?.user;
+        if (!userObj) {
+          setError("Invalid email or password. Please check your credentials.");
+          setLoading(false);
+          return;
+        }
+
+        setLocalUser(userObj);
         if (typeof window !== "undefined") {
+          localStorage.setItem("chatx_active_user", JSON.stringify(userObj));
           localStorage.setItem("chatx_view_mode", "workspace");
         }
-        setLoading(false);
-        onClose();
+
         if (onSuccessLogin) {
           onSuccessLogin();
         }
+        onClose();
+        setLoading(false);
         return;
       } else if (mode === "signup") {
         await signUpWithEmail({ email, password, fullName, username });
@@ -63,7 +88,7 @@ export function AuthDialog({ isOpen, onClose, defaultMode = "login", onSuccessLo
         setMessage("Password reset instructions have been sent to your email.");
       }
     } catch (err: any) {
-      setError(err.message || "An authentication error occurred.");
+      setError(err.message || "An authentication error occurred. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -259,6 +284,7 @@ export function AuthDialog({ isOpen, onClose, defaultMode = "login", onSuccessLo
 
             <button
               type="submit"
+              onClick={handleSubmit}
               disabled={loading}
               className="w-full bg-primary text-primary-foreground text-xs font-semibold py-2.5 rounded-lg hover:opacity-90 transition-all flex items-center justify-center gap-2 shadow-md disabled:opacity-50"
             >

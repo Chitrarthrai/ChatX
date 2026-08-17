@@ -48,16 +48,10 @@ export default function ContactsPage() {
     try {
       const supabase = createClient();
 
-      const queryPromise = supabase
+      const { data, error: dbError } = await supabase
         .from("profiles")
         .select("id, full_name, username, email, status, avatar_url, bio")
         .order("created_at", { ascending: false });
-
-      const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
-        setTimeout(() => resolve({ data: null, error: new Error("Request timeout") }), 1500)
-      );
-
-      const { data, error: dbError } = await Promise.race([queryPromise, timeoutPromise]);
 
       if (!dbError && data) {
         const fetchedProfiles: DirectoryContact[] = data.map((p: any) => ({
@@ -77,6 +71,7 @@ export default function ContactsPage() {
       }
     } catch (err: any) {
       setError(err.message || "Failed to load directory");
+      setContacts([]);
     } finally {
       setLoading(false);
     }

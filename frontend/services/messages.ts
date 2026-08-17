@@ -5,7 +5,7 @@ import type { CreateMessageInput } from '@chatx/validation';
 export async function fetchConversations(userId: string): Promise<Conversation[]> {
   const supabase = createClient();
   try {
-    const queryPromise = supabase
+    const { data, error } = await supabase
       .from('conversation_members')
       .select(`
         conversation:conversations (
@@ -22,11 +22,6 @@ export async function fetchConversations(userId: string): Promise<Conversation[]
       `)
       .eq('user_id', userId);
 
-    const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
-      setTimeout(() => resolve({ data: null, error: new Error('Timeout') }), 3000)
-    );
-
-    const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
     if (error || !data) return [];
 
     return data.map((row: any) => ({
@@ -45,10 +40,55 @@ export async function fetchConversations(userId: string): Promise<Conversation[]
   }
 }
 
+export async function getOrCreateDirectConversation(userId: string, targetUserId: string): Promise<string> {
+  const supabase = createClient();
+  const { data: userConvs } = await supabase
+    .from('conversation_members')
+    .select('conversation_id')
+    .eq('user_id', userId);
+
+  if (userConvs && userConvs.length > 0) {
+    const convIds = userConvs.map((c) => c.conversation_id);
+    const { data: sharedConvs } = await supabase
+      .from('conversation_members')
+      .select('conversation_id, conversation:conversations(type)')
+      .eq('user_id', targetUserId)
+      .in('conversation_id', convIds);
+
+    const direct = sharedConvs?.find((c: any) => c.conversation?.type === 'direct');
+    if (direct?.conversation_id) {
+      return direct.conversation_id;
+    }
+  }
+
+  const { data: newConv, error: convErr } = await supabase
+    .from('conversations')
+    .insert({ type: 'direct' })
+    .select()
+    .single();
+
+  if (convErr || !newConv) {
+    throw new Error(convErr?.message || 'Failed to create direct conversation');
+  }
+
+  await supabase.from('conversation_members').insert([
+    { conversation_id: newConv.id, user_id: userId },
+    { conversation_id: newConv.id, user_id: targetUserId },
+  ]);
+
+  return newConv.id;
+}
+
+const messageMemoryCache = new Map<string, Message[]>();
+
 export async function fetchMessages(conversationId: string, limit = 50): Promise<Message[]> {
+  return fetchMessagesFromBackend(conversationId, limit);
+}
+
+async function fetchMessagesFromBackend(conversationId: string, limit = 50): Promise<Message[]> {
   const supabase = createClient();
   try {
-    const queryPromise = supabase
+    const { data, error } = await supabase
       .from('messages')
       .select(`
         *,
@@ -65,14 +105,9 @@ export async function fetchMessages(conversationId: string, limit = 50): Promise
       .order('created_at', { ascending: true })
       .limit(limit);
 
-    const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
-      setTimeout(() => resolve({ data: null, error: new Error('Timeout') }), 3000)
-    );
+    if (error || !data || data.length === 0) return [];
 
-    const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
-    if (error || !data) return [];
-
-    return data.map((msg: any) => ({
+    const formatted: Message[] = data.map((msg: any) => ({
       id: msg.id,
       conversationId: msg.conversation_id,
       senderId: msg.sender_id,
@@ -100,6 +135,9 @@ export async function fetchMessages(conversationId: string, limit = 50): Promise
         updatedAt: new Date().toISOString(),
       } : undefined,
     }));
+
+    messageMemoryCache.set(conversationId, formatted);
+    return formatted;
   } catch {
     return [];
   }
@@ -118,17 +156,7 @@ export async function sendMessage(input: CreateMessageInput, senderId: string): 
       reply_to_id: input.replyToId,
       status: 'sent'
     })
-    .select(`
-      *,
-      sender:profiles (
-        id,
-        email,
-        username,
-        full_name,
-        avatar_url,
-        status
-      )
-    `)
+    .select()
     .single();
 
   if (error || !data) {
@@ -179,8 +207,8 @@ export async function markMessageAsDelivered(messageId: string): Promise<void> {
       })
       .eq('id', messageId)
       .eq('status', 'sent');
-  } catch (err: any) {
-    console.warn('Delivery receipt warning:', err.message);
+  } catch (err: unknown) {
+    console.warn('Delivery receipt warning:', (err as Error).message);
   }
 }
 
@@ -196,8 +224,8 @@ export async function markMessagesAsRead(conversationId: string, readerUserId: s
       .eq('conversation_id', conversationId)
       .neq('sender_id', readerUserId)
       .neq('status', 'read');
-  } catch (err: any) {
-    console.warn('Read receipt warning:', err.message);
+  } catch (err: unknown) {
+    console.warn('Read receipt warning:', (err as Error).message);
   }
 }
 

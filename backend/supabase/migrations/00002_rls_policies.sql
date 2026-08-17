@@ -71,6 +71,18 @@ WITH CHECK (
     )
 );
 
+CREATE POLICY "Authenticated users can create conversations" 
+ON public.conversations FOR INSERT TO authenticated 
+WITH CHECK (true);
+
+CREATE POLICY "Users can view conversation members" 
+ON public.conversation_members FOR SELECT TO authenticated 
+USING (true);
+
+CREATE POLICY "Authenticated users can add conversation members" 
+ON public.conversation_members FOR INSERT TO authenticated 
+WITH CHECK (true);
+
 -- 5. Audit Logs RLS (Read-only for Org Admins)
 CREATE POLICY "Org Admins can view audit logs" 
 ON public.audit_logs FOR SELECT TO authenticated 
@@ -82,3 +94,7 @@ USING (
         AND role IN ('owner', 'admin')
     )
 );
+
+-- 6. Channels RLS
+CREATE POLICY "Channels are viewable by authenticated users" 
+ON public.channels FOR SELECT TO authenticated USING (true);

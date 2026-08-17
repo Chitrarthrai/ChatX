@@ -13,22 +13,28 @@ export interface MeetingRecordingItem {
   isFavorite: boolean;
 }
 
+interface RecordingRow {
+  id: string;
+  title?: string;
+  meeting?: { title?: string; meeting_code?: string };
+  owner?: { full_name?: string; email?: string };
+  duration_seconds?: number;
+  file_size_bytes?: number;
+  video_url?: string;
+  file_url?: string;
+  created_at: string;
+}
+
 export async function fetchRecordings(): Promise<MeetingRecordingItem[]> {
   try {
     const supabase = createClient();
-    const queryPromise = supabase
+    const { data, error } = await supabase
       .from('meeting_recordings')
       .select('*, meeting:meetings(*), owner:profiles(full_name, email)')
       .order('created_at', { ascending: false });
 
-    const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
-      setTimeout(() => resolve({ data: null, error: new Error('Timeout') }), 1500)
-    );
-
-    const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
-
     if (!error && data && data.length > 0) {
-      return data.map((rec: any) => ({
+      return (data as RecordingRow[]).map((rec) => ({
         id: rec.id,
         meetingTitle: rec.title || rec.meeting?.title || "Live Meeting Session",
         meetingCode: rec.meeting?.meeting_code || "chatx-room",

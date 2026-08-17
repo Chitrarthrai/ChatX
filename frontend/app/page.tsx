@@ -13,7 +13,7 @@ import { AIDrawer } from "@/components/ai/ai-drawer";
 import { MessageItem } from "@/components/chat/message-item";
 import { signOut } from "@/services/auth";
 import { fetchChannels, createChannel, fetchProfilesDirectory } from "@/services/channels";
-import { sendMessage, subscribeToMessages, fetchMessages, markMessagesAsRead } from "@/services/messages";
+import { sendMessage, subscribeToMessages, fetchMessages, markMessagesAsRead, getOrCreateDirectConversation } from "@/services/messages";
 import type { ChannelType, Message } from "@chatx/types";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -53,6 +53,7 @@ import {
   PhoneOff,
   Plus,
   User,
+  FileText,
   BarChart2,
   HardDrive,
   Shield,
@@ -69,7 +70,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { theme, setTheme } = useTheme();
-  const { user, profile, clearLocalUser } = useAuth();
+  const { user, profile, isLoading, clearLocalUser } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [viewMode, setViewMode] = useState<"landing" | "workspace">("landing");
   const [isAuthOpen, setIsAuthOpen] = useState(false);
@@ -95,15 +96,39 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setMounted(true);
+    if (isLoading) return;
+
     if (typeof window !== "undefined") {
       const savedMode = localStorage.getItem("chatx_view_mode");
-      if (user || savedMode === "workspace_preview") {
+      const savedUserStr = localStorage.getItem("chatx_active_user");
+      if (user || savedUserStr || savedMode === "workspace") {
         setViewMode("workspace");
+        localStorage.setItem("chatx_view_mode", "workspace");
+
+        const activeDM = localStorage.getItem("chatx_active_dm");
+        const savedChat = localStorage.getItem("chatx_active_chat");
+        const targetChat = activeDM || savedChat;
+        if (targetChat) {
+          setSelectedChat(targetChat);
+          if (activeDM) localStorage.removeItem("chatx_active_dm");
+        }
       } else {
-        setViewMode("landing");
+        const savedMode = localStorage.getItem("chatx_view_mode");
+        if (savedMode === "workspace_preview") {
+          setViewMode("workspace");
+        } else {
+          setViewMode("landing");
+        }
       }
     }
-  }, [user]);
+  }, [user, isLoading]);
+
+  // Persist active selected chat selection
+  useEffect(() => {
+    if (selectedChat && user && typeof window !== "undefined") {
+      localStorage.setItem("chatx_active_chat", selectedChat);
+    }
+  }, [selectedChat, user]);
 
   const handleEnterWorkspace = () => {
     setViewMode("workspace");
@@ -127,8 +152,13 @@ export default function DashboardPage() {
       console.warn("Sign out:", err);
     }
     if (typeof window !== "undefined") {
-      localStorage.setItem("chatx_view_mode", "landing");
+      localStorage.removeItem("chatx_view_mode");
+      localStorage.removeItem("chatx_active_chat");
+      localStorage.removeItem("chatx_active_dm");
     }
+    setChannels([]);
+    setDirectMessages([]);
+    setMessagesByChannel({});
     setIsAuthOpen(false);
     setViewMode("landing");
   };
@@ -148,66 +178,64 @@ export default function DashboardPage() {
     }
   };
 
-  const [channels, setChannels] = useState<{ name: string; topic: string; type: ChannelType; locked: boolean }[]>([]);
-  const [directMessages, setDirectMessages] = useState<{ name: string; status: "online" | "away" | "dnd" | "offline"; role: string }[]>([]);
+  const [channels, setChannels] = useState<{ id: string; name: string; topic: string; type: ChannelType; locked: boolean }[]>([]);
+  const [directMessages, setDirectMessages] = useState<{ id: string; name: string; status: "online" | "away" | "dnd" | "offline"; role: string }[]>([]);
 
   useEffect(() => {
     fetchChannels().then((data) => {
-      setChannels(data);
-    });
-    fetchProfilesDirectory().then((profs) => {
-      setDirectMessages(profs.map((p) => ({ name: p.name, status: p.status, role: p.role })));
-    });
-  }, []);
+      if (data && data.length > 0) {
+        setChannels(data);
+        const savedChat = typeof window !== "undefined" ? localStorage.getItem("chatx_active_chat") : null;
+        if (savedChat && (data.some((c) => c.name === savedChat) || directMessages.some((dm) => dm.name === savedChat))) {
+          setSelectedChat(savedChat);
+        } else {
+          setSelectedChat(data[0].name);
+        }
+      }
+    }).catch(() => {});
 
-  const [messagesByChannel, setMessagesByChannel] = useState<Record<string, Message[]>>({
-    "Architecture & Engineering": [
-      {
-        id: "1",
-        conversationId: "c1",
-        senderId: "u1",
-        content: "Database migrations and RLS policies for tenant isolation have been configured in backend/supabase/migrations. All media streaming will run through the SFU boundary.",
-        type: "text",
-        isEdited: false,
-        isPinned: true,
-        isLocked: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        sender: {
-          id: "u1",
-          email: "alex@chatx.platform",
-          username: "alexm",
-          fullName: "Alex Mercer",
-          status: "online",
-          lastSeen: new Date().toISOString(),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      },
-      {
-        id: "2",
-        conversationId: "c1",
-        senderId: "u2",
-        content: "Theme variables from color-system.md are now bound globally to Next.js Tailwind and shared via TypeScript to React Native.",
-        type: "text",
-        isEdited: false,
-        isPinned: false,
-        isLocked: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        sender: {
-          id: "u2",
-          email: "user@chatx.platform",
-          username: "you",
-          fullName: "You",
-          status: "online",
-          lastSeen: new Date().toISOString(),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      },
-    ],
-  });
+    fetchProfilesDirectory().then((profs) => {
+      if (profs && profs.length > 0) {
+        setDirectMessages(profs.map((p) => ({ id: p.id, name: p.name, status: p.status, role: p.role })));
+      }
+    }).catch(() => {});
+  }, [user]);
+
+  const [messagesByChannel, setMessagesByChannel] = useState<Record<string, Message[]>>({});
+
+  // Dynamic message query from Supabase database whenever selectedChat changes
+  useEffect(() => {
+    if (!selectedChat) return;
+
+    const resolveAndFetch = async () => {
+      const activeChan = channels.find((c) => c.name === selectedChat);
+      const activeDM = directMessages.find((dm) => dm.name === selectedChat);
+
+      let targetConvId = activeChan?.id;
+
+      if (!targetConvId && activeDM?.id) {
+        const currentUserId = user?.id || profile?.id;
+        if (currentUserId) {
+          targetConvId = await getOrCreateDirectConversation(currentUserId, activeDM.id);
+        }
+      }
+
+      if (!targetConvId) return;
+
+      const currentUserId = user?.id || profile?.id;
+      if (currentUserId) {
+        markMessagesAsRead(targetConvId, currentUserId).catch(() => {});
+      }
+
+      const fetched = await fetchMessages(targetConvId);
+      setMessagesByChannel((prev) => ({
+        ...prev,
+        [selectedChat]: fetched || [],
+      }));
+    };
+
+    resolveAndFetch().catch((err) => console.warn("Database message fetch:", err));
+  }, [selectedChat, channels, directMessages, user, profile]);
 
   const handleCreateChannel = async (newChannel: { name: string; topic: string; type: ChannelType; isPrivate: boolean }) => {
     const created = await createChannel(newChannel.name, newChannel.topic, newChannel.type, newChannel.isPrivate);
@@ -251,15 +279,32 @@ export default function DashboardPage() {
     );
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     const contentText = messageInput.trim();
     if (!contentText) return;
 
+    setMessageInput("");
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(`chatx_draft_${selectedChat}`);
+    }
+
+    const activeChan = channels.find((c) => c.name === selectedChat);
+    const activeDM = directMessages.find((dm) => dm.name === selectedChat);
+    let activeConvId = activeChan?.id;
+
+    const senderUserId = user?.id || profile?.id;
+    if (!senderUserId) return;
+
+    if (!activeConvId && activeDM?.id) {
+      activeConvId = await getOrCreateDirectConversation(senderUserId, activeDM.id);
+    }
+    if (!activeConvId) return;
+
     const newMsg: Message = {
       id: Date.now().toString(),
-      conversationId: "00000000-0000-0000-0000-000000000001",
-      senderId: user?.id || "u2",
+      conversationId: activeConvId,
+      senderId: senderUserId,
       content: contentText,
       type: "text",
       isEdited: false,
@@ -269,7 +314,7 @@ export default function DashboardPage() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       sender: {
-        id: user?.id || "u2",
+        id: senderUserId,
         email: user?.email || "user@chatx.platform",
         username: profile?.username || "you",
         fullName: profile?.fullName || user?.email || "You",
@@ -285,34 +330,20 @@ export default function DashboardPage() {
       [selectedChat]: [...(prev[selectedChat] || []), newMsg],
     }));
 
-    // Dispatch realtime insert to Supabase backend
-    sendMessage(
-      { conversationId: "00000000-0000-0000-0000-000000000001", content: contentText, type: "text" },
-      user?.id || "985d80d9-de69-4322-9945-d7df9c362105"
-    ).then((sentMsg) => {
-      // Simulate recipient delivery & read progression
-      setTimeout(() => {
+    try {
+      await sendMessage(
+        { conversationId: activeConvId, content: contentText, type: "text" },
+        senderUserId
+      );
+      const fetchedMsgs = await fetchMessages(activeConvId);
+      if (fetchedMsgs && fetchedMsgs.length > 0) {
         setMessagesByChannel((prev) => ({
           ...prev,
-          [selectedChat]: (prev[selectedChat] || []).map((m) =>
-            m.id === newMsg.id ? { ...m, status: "delivered" } : m
-          ),
+          [selectedChat]: fetchedMsgs,
         }));
-      }, 1200);
-
-      setTimeout(() => {
-        setMessagesByChannel((prev) => ({
-          ...prev,
-          [selectedChat]: (prev[selectedChat] || []).map((m) =>
-            m.id === newMsg.id ? { ...m, status: "read" } : m
-          ),
-        }));
-      }, 2500);
-    }).catch((err) => console.warn("Supabase realtime message insert info:", err));
-
-    setMessageInput("");
-    if (typeof window !== "undefined") {
-      localStorage.removeItem(`chatx_draft_${selectedChat}`);
+      }
+    } catch (err) {
+      console.warn("Message sending:", err);
     }
   };
 
@@ -401,7 +432,10 @@ export default function DashboardPage() {
           isOpen={isAuthOpen}
           onClose={() => setIsAuthOpen(false)}
           defaultMode={authMode}
-          onSuccessLogin={() => handleEnterWorkspace()}
+          onSuccessLogin={() => {
+            setIsAuthOpen(false);
+            handleEnterWorkspace();
+          }}
         />
         <LandingPage
           onOpenAuth={(mode) => {
@@ -480,11 +514,11 @@ export default function DashboardPage() {
           <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4 my-6 items-center justify-center max-w-5xl mx-auto w-full">
             <div className="relative aspect-video bg-neutral-900 rounded-2xl border border-neutral-800 overflow-hidden flex items-center justify-center shadow-2xl">
               <div className="w-20 h-20 rounded-full bg-primary/30 text-primary flex items-center justify-center text-2xl font-bold border-2 border-primary">
-                AM
+                {(selectedChat || "P").charAt(0).toUpperCase()}
               </div>
               <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-lg text-white text-xs flex items-center gap-2">
-                <span>Alex Mercer (Host)</span>
-                <span className="w-2 h-2 rounded-full bg-success" />
+                <span>{selectedChat && selectedChat !== "Architecture & Engineering" ? selectedChat : "chitrarth rai (Peer Host)"}</span>
+                <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
               </div>
             </div>
 
@@ -499,7 +533,7 @@ export default function DashboardPage() {
                 </div>
               )}
               <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-lg text-white text-xs flex items-center gap-2">
-                <span>{profile?.fullName || "You"}</span>
+                <span>{profile?.fullName || "Chitrarth Rai (You)"}</span>
                 {isMuted && <MicOff className="w-3.5 h-3.5 text-destructive" />}
                 {isHandRaised && <Hand className="w-3.5 h-3.5 text-warning" />}
               </div>
@@ -510,10 +544,10 @@ export default function DashboardPage() {
           <div className="z-10 mx-auto w-full max-w-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs px-4 py-2.5 rounded-xl flex items-center justify-between shadow-lg backdrop-blur-md mb-2">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-              <span><strong>Sarah Jenkins</strong> is waiting in the meeting lobby</span>
+              <span><strong>chitrarth.rai@neophyte.ai</strong> is waiting in the meeting lobby</span>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => alert("Admitted Sarah Jenkins to meeting")} className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-[11px] px-3 py-1 rounded-lg transition-all">
+              <button onClick={() => alert("Admitted chitrarth.rai@neophyte.ai to meeting")} className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-[11px] px-3 py-1 rounded-lg transition-all">
                 Admit
               </button>
               <button onClick={() => alert("Declined entry")} className="bg-neutral-800 hover:bg-neutral-700 text-gray-300 font-semibold text-[11px] px-3 py-1 rounded-lg transition-all">
@@ -997,54 +1031,153 @@ export default function DashboardPage() {
 
       {/* Right Intelligence Panel */}
       {!activeThreadMessage && !isAIDrawerOpen && (
-        <aside className="w-80 border-l border-border bg-card/40 flex flex-col justify-between hidden lg:flex z-10">
+        <aside className="w-80 border-l border-border bg-card/40 flex flex-col justify-between hidden lg:flex z-10 overflow-y-auto">
           <div className="p-4 border-b border-border">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-primary" />
-                <span>AI Workspace Intelligence</span>
+                <User className="w-4 h-4 text-primary" />
+                <span>{directMessages.some(dm => dm.name === selectedChat) ? "User Profile" : "Channel Overview"}</span>
               </h3>
               <button
                 onClick={() => setIsAIDrawerOpen(true)}
-                className="text-[10px] bg-accent text-accent-foreground px-2 py-0.5 rounded-full font-medium hover:opacity-80"
+                className="text-[10px] bg-accent text-accent-foreground px-2 py-0.5 rounded-full font-medium hover:opacity-80 flex items-center gap-1"
               >
-                Open Chat
+                <Sparkles className="w-3 h-3" />
+                <span>AI Assist</span>
               </button>
             </div>
           </div>
 
-          <div className="flex-1 p-4 space-y-4 overflow-y-auto text-xs">
-            <div
-              onClick={() => setIsMeetingActive(true)}
-              className="meeting-stage-dark p-3 rounded-xl border border-border shadow-md space-y-2 cursor-pointer hover:border-primary transition-all"
-            >
-              <div className="flex items-center justify-between text-[11px] font-semibold text-white">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
-                  <span>Live SFU Stage</span>
-                </div>
-                <span className="text-[10px] text-gray-400">Join Stage</span>
-              </div>
-              <div className="aspect-video bg-neutral-900 rounded-lg flex items-center justify-center border border-neutral-800 relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-2">
-                  <span className="text-[10px] text-white font-medium">Alex Mercer (Host)</span>
-                </div>
-              </div>
-            </div>
+          <div className="flex-1 p-4 space-y-5 text-xs">
+            {/* Dynamic Active Contact Profile Card when DM is selected */}
+            {directMessages.some((dm) => dm.name === selectedChat) ? (
+              (() => {
+                const dmUser = directMessages.find((dm) => dm.name === selectedChat);
+                const isOnline = dmUser?.status === "online";
+                const isAway = dmUser?.status === "away";
+                return (
+                  <div className="space-y-4">
+                    <div className="bg-card p-4 rounded-xl border border-border/80 shadow-lg text-center relative overflow-hidden">
+                      <div className="absolute top-0 left-0 right-0 h-14 bg-gradient-to-r from-primary/20 via-primary/40 to-indigo-600/30" />
+                      <div className="relative z-10 pt-4 flex flex-col items-center">
+                        <div className="relative mb-2">
+                          <div className="w-16 h-16 rounded-full bg-primary/20 text-primary border-2 border-primary flex items-center justify-center text-xl font-bold shadow-md">
+                            {(dmUser?.name || "U").charAt(0).toUpperCase()}
+                          </div>
+                          <span
+                            className={`absolute bottom-0 right-0 w-4 h-4 rounded-full border-2 border-card ${
+                              isOnline ? "bg-emerald-500" : isAway ? "bg-amber-500" : "bg-gray-400"
+                            }`}
+                          />
+                        </div>
+                        <h4 className="font-bold text-foreground text-sm tracking-tight">{dmUser?.name}</h4>
+                        <p className="text-muted-foreground text-[11px] mb-1">
+                          {dmUser?.name?.includes("neophyte") ? "chitrarth.rai@neophyte.ai" : dmUser?.name?.includes("Chitrarth") ? "chitrarthrai10@gmail.com" : `${dmUser?.name?.toLowerCase().replace(/\s+/g, '')}@chatx.com`}
+                        </p>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-primary/10 text-primary border border-primary/20 mb-3">
+                          {dmUser?.role || "Team Member"}
+                        </span>
 
-            <div className="bg-card p-3 rounded-lg border border-border space-y-2">
-              <h4 className="font-semibold text-foreground text-xs">Permission-Aware Search</h4>
-              <p className="text-muted-foreground text-[11px]">
-                Ask questions across chats, transcripts, and documents. RLS policies guarantee data privacy.
-              </p>
-              <div
-                onClick={() => setIsAIDrawerOpen(true)}
-                className="bg-secondary p-2 rounded text-[11px] text-primary flex items-center justify-between cursor-pointer hover:bg-accent"
-              >
-                <span>"What are the Phase 1 deliverables?"</span>
-                <ChevronRight className="w-3.5 h-3.5" />
+                        {/* Profile Quick Action Buttons */}
+                        <div className="grid grid-cols-4 gap-2 w-full pt-2 border-t border-border/60">
+                          <button
+                            onClick={() => setIsMeetingActive(true)}
+                            className="flex flex-col items-center justify-center p-2 rounded-lg bg-secondary hover:bg-accent text-foreground transition-all"
+                            title="Start Video Call"
+                          >
+                            <Video className="w-4 h-4 text-primary mb-1" />
+                            <span className="text-[9px]">Call</span>
+                          </button>
+                          <Link
+                            href="/contacts"
+                            className="flex flex-col items-center justify-center p-2 rounded-lg bg-secondary hover:bg-accent text-foreground transition-all"
+                            title="View Contact Details"
+                          >
+                            <User className="w-4 h-4 text-primary mb-1" />
+                            <span className="text-[9px]">Profile</span>
+                          </Link>
+                          <Link
+                            href="/files"
+                            className="flex flex-col items-center justify-center p-2 rounded-lg bg-secondary hover:bg-accent text-foreground transition-all"
+                            title="View Shared Files"
+                          >
+                            <FileText className="w-4 h-4 text-primary mb-1" />
+                            <span className="text-[9px]">Files</span>
+                          </Link>
+                          <button
+                            onClick={() => alert(`Notifications muted for ${dmUser?.name}`)}
+                            className="flex flex-col items-center justify-center p-2 rounded-lg bg-secondary hover:bg-accent text-foreground transition-all"
+                            title="Mute Notifications"
+                          >
+                            <Bell className="w-4 h-4 text-primary mb-1" />
+                            <span className="text-[9px]">Mute</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Additional User Details */}
+                    <div className="bg-card p-3 rounded-xl border border-border/80 space-y-2.5">
+                      <h5 className="font-semibold text-foreground text-[11px] uppercase tracking-wider text-muted-foreground">Contact Metadata</h5>
+                      <div className="space-y-2 text-[11px]">
+                        <div className="flex items-center justify-between text-muted-foreground">
+                          <span>Status:</span>
+                          <span className="font-medium text-foreground capitalize flex items-center gap-1">
+                            <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? "bg-emerald-500" : "bg-amber-500"}`} />
+                            {dmUser?.status || "offline"}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-muted-foreground">
+                          <span>Organization:</span>
+                          <span className="font-medium text-foreground">ChatX Enterprise</span>
+                        </div>
+                        <div className="flex items-center justify-between text-muted-foreground">
+                          <span>Encryption:</span>
+                          <span className="font-medium text-emerald-400">TLS 1.3 End-to-End</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()
+            ) : (
+              /* Channel Info Overview Card when Channel is selected */
+              <div className="space-y-4">
+                <div className="bg-card p-4 rounded-xl border border-border/80 shadow-md space-y-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20">
+                      <Hash className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-foreground text-sm">{selectedChat}</h4>
+                      <p className="text-muted-foreground text-[11px]">Public Workspace Channel</p>
+                    </div>
+                  </div>
+                  <p className="text-muted-foreground text-[11px] bg-secondary/50 p-2.5 rounded-lg border border-border/40">
+                    {channels.find((c) => c.name === selectedChat)?.topic || "Monorepo architecture, WebRTC SFU streaming, and Supabase database isolation."}
+                  </p>
+                </div>
+
+                {/* Live SFU Meeting Preview */}
+                <div
+                  onClick={() => setIsMeetingActive(true)}
+                  className="meeting-stage-dark p-3 rounded-xl border border-border shadow-md space-y-2 cursor-pointer hover:border-primary transition-all"
+                >
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-white">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
+                      <span>Live SFU Meeting Stage</span>
+                    </div>
+                    <span className="text-[10px] text-gray-400">Join Stage</span>
+                  </div>
+                  <div className="aspect-video bg-neutral-900 rounded-lg flex items-center justify-center border border-neutral-800 relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-2">
+                      <span className="text-[10px] text-white font-medium">{profile?.fullName || "Chitrarth Rai (Host)"}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           <div className="p-4 border-t border-border bg-card/60">

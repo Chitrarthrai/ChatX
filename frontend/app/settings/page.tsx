@@ -51,12 +51,7 @@ export default function SettingsPage() {
       setLoading(true);
       try {
         const supabase = createClient();
-        const authPromise = supabase.auth.getUser();
-        const timeoutPromise = new Promise<any>((resolve) =>
-          setTimeout(() => resolve({ data: { user: null } }), 2000)
-        );
-
-        const { data: { user: currentUser } } = await Promise.race([authPromise, timeoutPromise]);
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
 
         if (currentUser) {
           const { data: prof } = await supabase

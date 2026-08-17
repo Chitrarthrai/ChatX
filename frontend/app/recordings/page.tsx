@@ -37,12 +37,8 @@ export default function RecordingsPage() {
       setLoading(true);
       setError(null);
       try {
-        const fetchPromise = fetchRecordings();
-        const timeoutPromise = new Promise<MeetingRecordingItem[]>((resolve) =>
-          setTimeout(() => resolve([]), 2500)
-        );
-
-        const data = await Promise.race([fetchPromise, timeoutPromise]);
+        const data = await fetchRecordings();
+        setRecordings(data || []);
         setRecordings(data);
       } catch (err: any) {
         setError(err.message || "Failed to load cloud recordings.");

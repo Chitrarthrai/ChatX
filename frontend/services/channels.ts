@@ -21,58 +21,49 @@ export interface UserDirectoryItem {
 export async function fetchChannels(): Promise<ChannelItem[]> {
   const supabase = createClient();
   try {
-    const queryPromise = supabase
+    const { data, error } = await supabase
       .from('channels')
       .select('id, name, topic, type, is_private')
       .order('created_at', { ascending: true });
 
-    const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
-      setTimeout(() => resolve({ data: null, error: new Error('Timeout') }), 2500)
-    );
-
-    const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
-
-    if (error || !data || data.length === 0) {
-      return [
-        { id: 'ch-1', name: 'Architecture & Engineering', topic: 'Monorepo architecture & SFU WebRTC', type: 'text', locked: false },
-        { id: 'ch-2', name: 'Frontend & Design System', topic: 'WCAG AA desaturated slate & indigo tokens', type: 'text', locked: false },
-        { id: 'ch-3', name: 'WebRTC Infrastructure', topic: 'LiveKit SFU node transport', type: 'text', locked: true },
-      ];
+    if (error || !data) {
+      return [];
     }
 
     return data.map((c: any) => ({
       id: c.id,
       name: c.name,
-      topic: c.topic || 'General discussion',
+      topic: c.topic || '',
       type: (c.type as ChannelType) || 'text',
       locked: c.is_private || false,
     }));
   } catch {
-    return [
-      { id: 'ch-1', name: 'Architecture & Engineering', topic: 'Monorepo architecture & SFU WebRTC', type: 'text', locked: false },
-      { id: 'ch-2', name: 'Frontend & Design System', topic: 'WCAG AA desaturated slate & indigo tokens', type: 'text', locked: false },
-      { id: 'ch-3', name: 'WebRTC Infrastructure', topic: 'LiveKit SFU node transport', type: 'text', locked: true },
-    ];
+    return [];
   }
 }
 
 export async function createChannel(name: string, topic: string, type: ChannelType = 'text', isPrivate = false): Promise<ChannelItem> {
   const supabase = createClient();
+  const { data: teamData } = await supabase.from('teams').select('id').limit(1).single();
+  if (!teamData?.id) {
+    throw new Error('No active workspace team found.');
+  }
+
   const { data, error } = await supabase
     .from('channels')
-    .insert({ name, topic, type, is_private: isPrivate })
+    .insert({ team_id: teamData.id, name, topic, type, is_private: isPrivate })
     .select()
     .single();
 
   if (error) {
-    return { id: `ch-${Date.now()}`, name, topic, type, locked: isPrivate };
+    throw new Error(error.message);
   }
 
   return {
     id: data.id,
     name: data.name,
     topic: data.topic || '',
-    type: data.type || 'text',
+    type: (data.type as ChannelType) || 'text',
     locked: data.is_private || false,
   };
 }
@@ -80,19 +71,13 @@ export async function createChannel(name: string, topic: string, type: ChannelTy
 export async function fetchProfilesDirectory(): Promise<UserDirectoryItem[]> {
   const supabase = createClient();
   try {
-    const queryPromise = supabase
+    const { data, error } = await supabase
       .from('profiles')
       .select('id, full_name, username, email, status')
       .order('created_at', { ascending: false })
       .limit(50);
 
-    const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
-      setTimeout(() => resolve({ data: null, error: new Error('Timeout') }), 2500)
-    );
-
-    const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
-
-    if (error || !data || data.length === 0) {
+    if (error || !data) {
       return [];
     }
 

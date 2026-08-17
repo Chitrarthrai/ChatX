@@ -38,29 +38,6 @@ export default function SavedMessagesPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const fallbackSavedList: SavedItem[] = [
-    {
-      id: "mock-1",
-      messageId: "msg-101",
-      senderName: "Alex Mercer",
-      senderAvatar: "A",
-      senderEmail: "alex.mercer@chatx.platform",
-      content: "Database migrations and RLS policies for tenant isolation have been configured in backend/supabase/migrations.",
-      channelName: "Architecture & Engineering",
-      savedAt: "Yesterday at 4:15 PM"
-    },
-    {
-      id: "mock-2",
-      messageId: "msg-102",
-      senderName: "Sarah Jenkins",
-      senderAvatar: "S",
-      senderEmail: "sarah.j@chatx.platform",
-      content: "Make sure all media streaming will run through the SFU stage boundary to avoid mesh P2P peer connection exhaustion.",
-      channelName: "WebRTC Infrastructure",
-      savedAt: "2 days ago"
-    }
-  ];
-
   useEffect(() => {
     const fetchSaved = async () => {
       setLoading(true);
@@ -68,12 +45,7 @@ export default function SavedMessagesPage() {
 
       try {
         const supabase = createClient();
-        const authPromise = supabase.auth.getUser();
-        const timeoutPromise = new Promise<any>((resolve) =>
-          setTimeout(() => resolve({ data: { user: null } }), 1500)
-        );
-
-        const { data: { user } } = await Promise.race([authPromise, timeoutPromise]);
+        const { data: { user } } = await supabase.auth.getUser();
 
         if (user) {
           const { data, error: fetchErr } = await supabase

@@ -54,39 +54,6 @@ export default function CalendarPage() {
   const [creating, setCreating] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const fallbackMeetings: MeetingItem[] = [
-    {
-      id: "cal-1",
-      title: "ChatX Architecture & WebRTC Stage Sync",
-      description: "Review LiveKit SFU node topology, mesh peer exhaustion guards, and RLS tenant policies.",
-      hostName: "Alex Mercer",
-      hostAvatar: "A",
-      hostEmail: "alex.mercer@chatx.platform",
-      scheduledStart: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
-      timeFormatted: "Today at 02:00 PM",
-      durationFormatted: "45 mins",
-      meetingCode: "chatx-sfu-sync",
-      status: "active",
-      isWaitingRoom: true,
-      isRecording: true
-    },
-    {
-      id: "cal-2",
-      title: "Frontend Design System & Dark Theme Review",
-      description: "Audit CSS variable tokens, glassmorphism overlays, and accessibility contrast ratios.",
-      hostName: "Sophia Chen",
-      hostAvatar: "S",
-      hostEmail: "sophia.c@chatx.platform",
-      scheduledStart: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      timeFormatted: "Tomorrow at 10:30 AM",
-      durationFormatted: "30 mins",
-      meetingCode: "design-audit",
-      status: "scheduled",
-      isWaitingRoom: true,
-      isRecording: false
-    }
-  ];
-
   useEffect(() => {
     const fetchMeetings = async () => {
       setLoading(true);
@@ -94,16 +61,10 @@ export default function CalendarPage() {
 
       try {
         const supabase = createClient();
-        const queryPromise = supabase
+        const { data, error: fetchErr } = await supabase
           .from("meetings")
           .select("id, title, description, meeting_code, status, is_waiting_room_enabled, is_recording_enabled, scheduled_start, created_at, host:profiles(full_name, avatar_url, email)")
           .order("scheduled_start", { ascending: true });
-
-        const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
-          setTimeout(() => resolve({ data: null, error: new Error("Request timeout") }), 1500)
-        );
-
-        const { data, error: fetchErr } = await Promise.race([queryPromise, timeoutPromise]);
 
         if (fetchErr || !data || data.length === 0) {
           setMeetings([]);

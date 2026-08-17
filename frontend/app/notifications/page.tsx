@@ -38,49 +38,6 @@ export default function NotificationsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
-  const fallbackNotifications: AppNotification[] = [
-    {
-      id: "notif-1",
-      userId: "u-active",
-      type: "mention",
-      title: "Mentioned in #Architecture",
-      body: "Alex Mercer tagged you: '@team check out the updated tenant RLS policies in 00003_extended_schema.sql'.",
-      isRead: false,
-      linkUrl: "/",
-      createdAt: new Date(Date.now() - 10 * 60 * 1000).toISOString()
-    },
-    {
-      id: "notif-2",
-      userId: "u-active",
-      type: "meeting_invite",
-      title: "Upcoming Video Stage Meeting",
-      body: "Sprint Architecture Review & SFU Stage sync starts in 15 minutes.",
-      isRead: false,
-      linkUrl: "/",
-      createdAt: new Date(Date.now() - 30 * 60 * 1000).toISOString()
-    },
-    {
-      id: "notif-3",
-      userId: "u-active",
-      type: "ai_summary",
-      title: "AI Meeting Executive Summary Ready",
-      body: "Executive summary and 4 key action items from yesterday's engineering sync are ready for review.",
-      isRead: true,
-      linkUrl: "/",
-      createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
-    },
-    {
-      id: "notif-4",
-      userId: "u-active",
-      type: "system",
-      title: "Security Policy Update",
-      body: "Role-based access controls (RBAC) and OAuth session expiration tokens have been re-verified.",
-      isRead: true,
-      linkUrl: "/admin",
-      createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-    }
-  ];
-
   useEffect(() => {
     let channelSub: any;
 
@@ -89,31 +46,20 @@ export default function NotificationsPage() {
       setError(null);
       try {
         const supabase = createClient();
-        const authPromise = supabase.auth.getUser();
-        const timeoutPromise = new Promise<any>((resolve) =>
-          setTimeout(() => resolve({ data: { user: null } }), 1500)
-        );
-
-        const { data: { user } } = await Promise.race([authPromise, timeoutPromise]);
+        const { data: { user } } = await supabase.auth.getUser();
 
         if (user) {
           setCurrentUserId(user.id);
           const data = await fetchNotifications(user.id);
-          if (data && data.length > 0) {
-            setNotifications(data);
-          } else {
-            setNotifications([]);
-          }
+          setNotifications(data || []);
 
-          // Subscribe to Realtime notifications
           channelSub = subscribeToNotifications(user.id, (newNotif) => {
             setNotifications((prev) => [newNotif, ...prev]);
           });
         } else {
           setNotifications([]);
         }
-      } catch (err: any) {
-        setError(err.message || "Failed to load notifications.");
+      } catch {
         setNotifications([]);
       } finally {
         setLoading(false);

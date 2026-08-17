@@ -7,11 +7,11 @@ import { getProfile } from "@/services/profile";
 import type { UserProfile } from "@chatx/types";
 
 interface AuthContextType {
-  user: any | null;
+  user: User | null;
   profile: UserProfile | null;
   session: Session | null;
   isLoading: boolean;
-  setLocalUser: (u: any) => void;
+  setLocalUser: (u: User | Record<string, unknown>) => void;
   clearLocalUser: () => void;
   refreshProfile: () => Promise<void>;
 }
@@ -27,7 +27,7 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<any | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -35,7 +35,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const fetchUserProfile = async (userId: string) => {
     try {
       const p = await getProfile(userId);
-      setProfile(p);
+      if (p) {
+        setProfile(p);
+      }
     } catch (err) {
       console.error("Failed to load profile:", err);
     }
@@ -44,45 +46,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const supabase = createClient();
 
-    // Check local storage fallback user first
+    // 1. Instant LocalStorage Session Hydration on Tab Refresh (F5)
     if (typeof window !== "undefined") {
       const savedUserStr = localStorage.getItem("chatx_active_user");
       if (savedUserStr) {
         try {
           const savedUser = JSON.parse(savedUserStr);
-          setUser(savedUser);
-          setProfile({
-            id: savedUser.id || "u-active",
-            username: savedUser.email?.split("@")[0] || "user",
-            fullName: savedUser.user_metadata?.full_name || savedUser.email || "Active User",
-            email: savedUser.email || "user@chatx.platform",
-            avatarUrl: undefined,
-            status: "online",
-            customStatus: "Working in ChatX",
-            lastSeen: new Date().toISOString(),
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          });
+          if (savedUser && savedUser.id) {
+            setUser(savedUser);
+            fetchUserProfile(savedUser.id);
+          }
         } catch { /* parse fallback */ }
       }
     }
 
-    // Check Supabase session
+    // 2. Initial Supabase Session Check on Tab Load / Re-open
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         setSession(session);
         setUser(session.user);
+        if (typeof window !== "undefined") {
+          localStorage.setItem("chatx_active_user", JSON.stringify(session.user));
+        }
         fetchUserProfile(session.user.id);
       }
       setIsLoading(false);
     });
 
-    // Listen for Supabase auth state changes
+    // 3. Real-time Supabase Auth Listener for Sign-In, Token Refresh, and Sign-Out
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, currentSession) => {
         if (currentSession?.user) {
           setSession(currentSession);
           setUser(currentSession.user);
+          if (typeof window !== "undefined") {
+            localStorage.setItem("chatx_active_user", JSON.stringify(currentSession.user));
+          }
           await fetchUserProfile(currentSession.user.id);
         } else if (event === "SIGNED_OUT") {
           setSession(null);
@@ -101,23 +100,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const setLocalUser = (u: any) => {
-    setUser(u);
-    const mockProf: UserProfile = {
-      id: u.id || "u-active",
-      username: u.email?.split("@")[0] || "user",
-      fullName: u.user_metadata?.full_name || u.email || "Active User",
-      email: u.email || "user@chatx.platform",
-      avatarUrl: undefined,
-      status: "online",
-      customStatus: "Working in ChatX",
-      lastSeen: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    setProfile(mockProf);
+  const setLocalUser = (u: User | Record<string, unknown> | any) => {
+    setUser(u as User);
     if (typeof window !== "undefined") {
       localStorage.setItem("chatx_active_user", JSON.stringify(u));
+    }
+    if (u?.id) {
+      fetchUserProfile(u.id);
     }
   };
 

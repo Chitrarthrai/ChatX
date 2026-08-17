@@ -79,14 +79,14 @@ function SearchContent() {
             .limit(10);
 
           if (userProfData) {
-            userProfData.forEach((u: any) => {
+            userProfData.forEach((u: { id: string; full_name?: string; username?: string; email?: string; status?: string; bio?: string }) => {
               fetchedItems.push({
                 id: `user-${u.id}`,
                 category: "users",
-                title: u.full_name || u.username,
-                snippet: u.bio || `User profile @${u.username} (${u.email})`,
+                title: u.full_name || u.username || "Team Member",
+                snippet: u.bio || `User profile @${u.username || "user"} (${u.email || ""})`,
                 meta: `Status: ${u.status || "online"}`,
-                authorOrOwner: u.email || `@${u.username}`,
+                authorOrOwner: u.email || `@${u.username || "user"}`,
                 timestamp: "Active Member",
                 actionUrl: "/contacts",
                 badge: (u.status || "ONLINE").toUpperCase()
@@ -105,13 +105,14 @@ function SearchContent() {
 
           if (msgData) {
             msgData.forEach((m: any) => {
+              const senderObj = Array.isArray(m.sender) ? m.sender[0] : m.sender;
               fetchedItems.push({
                 id: `msg-${m.id}`,
                 category: "messages",
-                title: `Message from ${m.sender?.full_name || "Team Member"}`,
+                title: `Message from ${senderObj?.full_name || senderObj?.username || "Team Member"}`,
                 snippet: m.content,
                 meta: `Channel: Architecture & Engineering`,
-                authorOrOwner: m.sender?.full_name || "Member",
+                authorOrOwner: senderObj?.full_name || "Member",
                 timestamp: new Date(m.created_at || Date.now()).toLocaleDateString(),
                 actionUrl: "/"
               });
@@ -129,13 +130,14 @@ function SearchContent() {
 
           if (fileData) {
             fileData.forEach((f: any) => {
+              const uploaderObj = Array.isArray(f.uploader) ? f.uploader[0] : f.uploader;
               fetchedItems.push({
                 id: `file-${f.id}`,
                 category: "files",
                 title: f.name,
                 snippet: `Shared workspace file (${Math.round((f.file_size || 1024) / 1024)} KB)`,
-                meta: `Uploaded by ${f.uploader?.full_name || "Storage"}`,
-                authorOrOwner: f.uploader?.full_name || "Enterprise Storage",
+                meta: `Uploaded by ${uploaderObj?.full_name || "Storage"}`,
+                authorOrOwner: uploaderObj?.full_name || "Enterprise Storage",
                 timestamp: new Date(f.created_at || Date.now()).toLocaleDateString(),
                 actionUrl: "/files",
                 badge: f.mime_type?.split("/")[1]?.toUpperCase() || "FILE"
@@ -153,7 +155,7 @@ function SearchContent() {
             .limit(10);
 
           if (meetingData) {
-            meetingData.forEach((mt: any) => {
+            meetingData.forEach((mt: { id: string; title: string; description?: string; meeting_code?: string; created_at?: string }) => {
               fetchedItems.push({
                 id: `mt-${mt.id}`,
                 category: "meetings",

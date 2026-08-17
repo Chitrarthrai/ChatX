@@ -39,13 +39,6 @@ export default function CallsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fallbackCallLogs: CallLogItem[] = [
-    { id: "1", name: "Alex Mercer", type: "video", direction: "incoming", duration: "14m 20s", timestamp: "Today, 10:45 AM", callCode: "sfu-alex-101" },
-    { id: "2", name: "Architecture Core Sync", type: "group", direction: "outgoing", duration: "45m 12s", timestamp: "Yesterday, 3:15 PM", callCode: "sfu-arch-202" },
-    { id: "3", name: "Elena Rostova", type: "audio", direction: "missed", duration: "-", timestamp: "Aug 9, 2:00 PM", callCode: "sfu-elena-303" },
-    { id: "4", name: "Sophia Chen", type: "video", direction: "outgoing", duration: "22m 05s", timestamp: "Aug 8, 11:30 AM", callCode: "sfu-sophia-404" },
-    { id: "5", name: "Marcus Vance", type: "audio", direction: "incoming", duration: "05m 48s", timestamp: "Aug 7, 4:10 PM", callCode: "sfu-marcus-505" },
-  ];
 
   const fetchCallLogs = async () => {
     setLoading(true);
@@ -54,7 +47,7 @@ export default function CallsPage() {
       const supabase = createClient();
       
       // TODO: replace with real table when calls table is migrated
-      const queryPromise = supabase
+      const { data, error: dbError } = await supabase
         .from("calls")
         .select(`
           id,
@@ -66,12 +59,6 @@ export default function CallsPage() {
         `)
         .order("created_at", { ascending: false });
 
-      const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
-        setTimeout(() => resolve({ data: null, error: new Error("Request timeout") }), 1500)
-      );
-
-      const { data, error: dbError } = await Promise.race([queryPromise, timeoutPromise]);
-
       if (dbError || !data || data.length === 0) {
         setCallLogs([]);
       } else {
@@ -81,8 +68,8 @@ export default function CallsPage() {
             name: c.caller?.full_name || c.caller?.username || "Unknown Caller",
             type: (c.call_type || "video") as any,
             direction: (c.direction || "incoming") as any,
-            duration: c.duration_seconds ? `${Math.floor(c.duration_seconds / 60)}m ${c.duration_seconds % 60}s` : "-",
-            timestamp: new Date(c.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" }),
+            duration: `${Math.floor((c.duration_seconds || 0) / 60)}m ${(c.duration_seconds || 0) % 60}s`,
+            timestamp: new Date(c.created_at || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           }))
         );
       }

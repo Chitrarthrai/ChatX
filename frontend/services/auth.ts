@@ -21,29 +21,16 @@ export async function signUpWithEmail(input: SignupInput) {
 export async function signInWithEmail(input: LoginInput) {
   const supabase = createClient();
 
-  const authPromise = supabase.auth.signInWithPassword({
+  const { data, error } = await supabase.auth.signInWithPassword({
     email: input.email,
     password: input.password,
   });
 
-  const timeoutPromise = new Promise<{ data: any; error: any }>((_, reject) => {
-    setTimeout(() => reject(new Error('Auth request timed out. Logged in with active credentials.')), 5000);
-  });
-
-  try {
-    const res: any = await Promise.race([authPromise, timeoutPromise]);
-    if (res?.error) {
-      // If error is invalid credentials or email not confirmed, throw error to show user banner
-      throw new Error(res.error.message);
-    }
-    return res.data;
-  } catch (err: any) {
-    if (err.message.includes('Invalid login credentials') || err.message.includes('Email not confirmed')) {
-      throw err;
-    }
-    // Fallback for timeout or local network latency
-    return { user: { id: "u-active", email: input.email } };
+  if (error) {
+    throw new Error(error.message);
   }
+
+  return data;
 }
 
 export async function signInWithOAuth(provider: 'google' | 'azure' | 'apple' | 'github') {

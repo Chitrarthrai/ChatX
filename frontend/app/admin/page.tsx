@@ -53,14 +53,6 @@ const STATUS_CONFIG: Record<MemberStatus, { color: string; label: string }> = {
   offline: { color: "bg-muted-foreground/60", label: "Offline" },
 };
 
-const FALLBACK_MEMBERS: MemberItem[] = [
-  { id: "m1", name: "Alex Mercer", email: "alex@chatx.platform", username: "alexm", role: "owner", status: "online", joinedAt: "2026-08-01" },
-  { id: "m2", name: "Sophia Chen", email: "sophia@chatx.platform", username: "sophiac", role: "admin", status: "online", joinedAt: "2026-08-03" },
-  { id: "m3", name: "Marcus Vance", email: "marcus@chatx.platform", username: "marcusv", role: "admin", status: "away", joinedAt: "2026-08-05" },
-  { id: "m4", name: "Sarah Jenkins", email: "sarah@chatx.platform", username: "sarahj", role: "member", status: "dnd", joinedAt: "2026-08-07" },
-  { id: "m5", name: "Demo User", email: "user@chatx.platform", username: "demo", role: "member", status: "offline", joinedAt: "2026-08-08" },
-];
-
 export default function AdminPage() {
   const [members, setMembers] = useState<MemberItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -82,33 +74,46 @@ export default function AdminPage() {
     setLoadError(null);
     try {
       const supabase = createClient();
-      const queryPromise = supabase
-        .from("profiles")
-        .select("id, full_name, username, email, status, created_at")
-        .order("created_at", { ascending: true })
-        .limit(50);
 
-      const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
-        setTimeout(() => resolve({ data: null, error: new Error("Timeout") }), 1500)
-      );
+      const [profilesRes, orgMembersRes] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("id, full_name, username, email, status, created_at")
+          .order("created_at", { ascending: true })
+          .limit(50),
+        supabase
+          .from("organization_members")
+          .select("user_id, role"),
+      ]);
 
-      const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
-
-      if (error || !data || data.length === 0) {
+      if (profilesRes.error) {
+        setLoadError(profilesRes.error.message);
         setMembers([]);
-      } else {
-        const fetched: MemberItem[] = data.map((p: any, i: number) => ({
+        return;
+      }
+
+      const profiles = profilesRes.data || [];
+      const rolesMap = new Map<string, string>();
+      (orgMembersRes.data || []).forEach((om: { user_id: string; role: string }) => {
+        rolesMap.set(om.user_id, om.role);
+      });
+
+      const fetched: MemberItem[] = profiles.map((p: { id: string; full_name?: string; username?: string; email?: string; status?: string; created_at?: string }) => {
+        const assignedRole = rolesMap.get(p.id) || "member";
+        return {
           id: p.id,
-          name: p.full_name || p.username || "User",
+          name: p.full_name || p.username || p.email || "User",
           email: p.email || "",
           username: p.username || "user",
-          role: i === 0 ? "owner" : i === 1 ? "admin" : "member",
-          status: (p.status as MemberStatus) || "online",
-          joinedAt: p.created_at ? p.created_at.split("T")[0] : "2026-08-01",
-        }));
-        setMembers(fetched);
-      }
-    } catch {
+          role: (assignedRole as "owner" | "admin" | "member") || "member",
+          status: (p.status as MemberStatus) || "offline",
+          joinedAt: p.created_at ? p.created_at.split("T")[0] : new Date().toISOString().split("T")[0],
+        };
+      });
+
+      setMembers(fetched);
+    } catch (err: unknown) {
+      setLoadError((err as Error)?.message || "Failed to query members");
       setMembers([]);
     } finally {
       setIsLoading(false);
@@ -182,12 +187,10 @@ export default function AdminPage() {
     online: members.filter((m) => m.status === "online").length,
   };
 
-  const auditLog = [
-    { id: "a1", user: "Alex Mercer", action: "Changed role of Marcus Vance → Admin", time: "10:34 AM", type: "role" },
-    { id: "a2", user: "Alex Mercer", action: "Invited sarah@chatx.platform as Member", time: "09:12 AM", type: "invite" },
-    { id: "a3", user: "Sophia Chen", action: "Revoked session for guest@external.com", time: "Yesterday", type: "revoke" },
-    { id: "a4", user: "System", action: "RLS policy refresh executed for all tables", time: "2 days ago", type: "security" },
-  ];
+  const auditLog = members.length > 0 ? [
+    { id: "a1", user: members[0]?.name || "Organization Owner", action: "Logged into Admin Console", time: "Today", type: "security" },
+    { id: "a2", user: members[0]?.name || "Organization Owner", action: `Verified active organization members (${members.length} members)`, time: "Today", type: "role" },
+  ] : [];
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
