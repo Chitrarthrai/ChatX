@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import { scheduleMeeting, MeetingItem } from "@/services/meetings";
 import { fetchDirectMessageContacts, fetchChannels, UserDirectoryItem, ChannelItem } from "@/services/channels";
+import { CustomDatePicker } from "./custom-date-picker";
+import { CustomTimePicker } from "./custom-time-picker";
 
 interface ScheduleChatMeetingDialogProps {
   isOpen: boolean;
@@ -239,22 +241,20 @@ export function ScheduleChatMeetingDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="font-medium text-foreground">Scheduled Date *</label>
-              <input
-                type="date"
-                required
+              <CustomDatePicker
                 value={scheduledDate}
-                onChange={(e) => setScheduledDate(e.target.value)}
-                className="w-full bg-secondary border border-input rounded-xl px-3.5 py-2.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                onChange={(_, dateStr) => setScheduledDate(dateStr)}
+                className="w-full"
+                align="left"
               />
             </div>
             <div className="space-y-1.5">
               <label className="font-medium text-foreground">Start Time *</label>
-              <input
-                type="time"
-                required
+              <CustomTimePicker
                 value={scheduledTime}
-                onChange={(e) => setScheduledTime(e.target.value)}
-                className="w-full bg-secondary border border-input rounded-xl px-3.5 py-2.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                onChange={(timeStr) => setScheduledTime(timeStr)}
+                className="w-full"
+                align="right"
               />
             </div>
           </div>

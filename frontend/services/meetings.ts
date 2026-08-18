@@ -1,6 +1,23 @@
 import { createClient, supabaseRestFetch } from '@/lib/supabase/client';
 import { sendMessage, getOrCreateDirectConversation } from '@/services/messages';
 
+const MONTH_NAMES_SHORT = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+];
+
+export function formatMeetingTime(dateStr: string | Date): string {
+  const d = typeof dateStr === 'string' ? new Date(dateStr) : dateStr;
+  if (isNaN(d.getTime())) return '';
+  const h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const period = h >= 12 ? 'PM' : 'AM';
+  const displayH = h % 12 === 0 ? 12 : h % 12;
+  const timeStr = `${String(displayH).padStart(2, '0')}:${m} ${period}`;
+  const dateFormatted = `${MONTH_NAMES_SHORT[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+  return `${timeStr} • ${dateFormatted}`;
+}
+
 export interface MeetingParticipant {
   id: string;
   meetingId: string;
@@ -100,10 +117,7 @@ export async function fetchMeetings(): Promise<MeetingItem[]> {
         hostAvatar: host?.avatar_url || hostName.charAt(0).toUpperCase(),
         hostEmail: host?.email,
         scheduledStart: startDate.toISOString(),
-        timeFormatted:
-          startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) +
-          ' • ' +
-          startDate.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }),
+        timeFormatted: formatMeetingTime(startDate),
         durationFormatted: '45 mins',
         meetingCode: m.meeting_code || `chatx-${m.id.substring(0, 6)}`,
         status: m.status || 'scheduled',
@@ -260,10 +274,7 @@ export async function scheduleMeeting(input: ScheduleMeetingInput): Promise<Meet
     hostName: input.hostName || 'You (Host)',
     hostAvatar: (input.hostName || 'Y').charAt(0).toUpperCase(),
     scheduledStart: startDateTime,
-    timeFormatted:
-      new Date(startDateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) +
-      ' • ' +
-      new Date(startDateTime).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }),
+    timeFormatted: formatMeetingTime(startDateTime),
     durationFormatted: '45 mins',
     meetingCode: uniqueCode,
     status: 'scheduled',

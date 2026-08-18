@@ -78,7 +78,6 @@ import {
   BarChart2,
   HardDrive,
   Shield,
-  Globe,
   Maximize2,
   Archive,
   RotateCcw
@@ -1279,13 +1278,6 @@ export default function DashboardPage() {
             title="Toggle theme"
           >
             {mounted && theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
-          <button
-            onClick={handleGoToLanding}
-            className="p-2.5 rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground"
-            title="Landing Page"
-          >
-            <Globe className="w-5 h-5" />
           </button>
           <button
             onClick={() => setIsProfileOpen(true)}

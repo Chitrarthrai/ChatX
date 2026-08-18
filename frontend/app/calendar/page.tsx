@@ -48,8 +48,21 @@ import {
 } from "@/services/meetings";
 import { fetchChannels, fetchDirectMessageContacts, ChannelItem, UserDirectoryItem } from "@/services/channels";
 import { sendMessage } from "@/services/messages";
+import { CustomDatePicker } from "@/components/meetings/custom-date-picker";
+import { CustomTimePicker } from "@/components/meetings/custom-time-picker";
 
 type CalendarViewMode = "day" | "month" | "week" | "list";
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
+];
+const MONTH_NAMES_SHORT = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+];
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DAY_NAMES_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function CalendarPage() {
   const router = useRouter();
@@ -332,17 +345,29 @@ export default function CalendarPage() {
     setIsModalOpen(true);
   };
 
-  // Date Navigation Helpers
-  const goToPreviousDay = () => {
-    const prev = new Date(selectedDate);
-    prev.setDate(prev.getDate() - 1);
-    setSelectedDate(prev);
+  // Date Navigation Helpers (View-mode aware)
+  const handlePreviousStep = () => {
+    const d = new Date(selectedDate);
+    if (viewMode === "month") {
+      d.setMonth(d.getMonth() - 1);
+    } else if (viewMode === "week") {
+      d.setDate(d.getDate() - 7);
+    } else {
+      d.setDate(d.getDate() - 1);
+    }
+    setSelectedDate(d);
   };
 
-  const goToNextDay = () => {
-    const next = new Date(selectedDate);
-    next.setDate(next.getDate() + 1);
-    setSelectedDate(next);
+  const handleNextStep = () => {
+    const d = new Date(selectedDate);
+    if (viewMode === "month") {
+      d.setMonth(d.getMonth() + 1);
+    } else if (viewMode === "week") {
+      d.setDate(d.getDate() + 7);
+    } else {
+      d.setDate(d.getDate() + 1);
+    }
+    setSelectedDate(d);
   };
 
   const goToToday = () => {
@@ -565,44 +590,48 @@ export default function CalendarPage() {
 
       {/* Date Navigation & Stepper Toolbar (for Day, Month, and Week views) */}
       <div className="bg-card/40 border-b border-border/80 px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={goToPreviousDay}
-            className="p-1.5 rounded-lg border border-border bg-secondary hover:bg-secondary/80 text-foreground transition-all"
-            title="Previous Day"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <button
-            onClick={goToNextDay}
-            className="p-1.5 rounded-lg border border-border bg-secondary hover:bg-secondary/80 text-foreground transition-all"
-            title="Next Day"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-          <button
-            onClick={goToToday}
-            className={`px-3 py-1 rounded-lg border text-xs font-semibold transition-all ${
-              isTodayActive
-                ? "bg-primary/20 text-primary border-primary/30"
-                : "bg-secondary text-muted-foreground border-border hover:text-foreground"
-            }`}
-          >
-            Today
-          </button>
+        <div className="flex items-center gap-3">
+          {/* Stepper Segmented Control */}
+          <div className="flex items-center bg-secondary/80 p-0.5 rounded-xl border border-border/80 shadow-xs">
+            <button
+              onClick={handlePreviousStep}
+              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-card/80 transition-all flex items-center justify-center"
+              title={viewMode === "month" ? "Previous Month" : viewMode === "week" ? "Previous Week" : "Previous Day"}
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={goToToday}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                isTodayActive
+                  ? "bg-primary text-primary-foreground shadow-xs"
+                  : "text-muted-foreground hover:text-foreground hover:bg-card/80"
+              }`}
+              title="Jump to Today"
+            >
+              Today
+            </button>
+            <button
+              onClick={handleNextStep}
+              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-card/80 transition-all flex items-center justify-center"
+              title={viewMode === "month" ? "Next Month" : viewMode === "week" ? "Next Week" : "Next Day"}
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
 
-          <div className="h-4 w-px bg-border mx-1" />
+          <div className="h-4 w-px bg-border/60" />
 
           {/* Formatted Date Title */}
           <div className="flex items-center gap-2" suppressHydrationWarning>
-            <h2 className="font-bold text-sm text-foreground" suppressHydrationWarning>
+            <h2 className="font-bold text-sm text-foreground tracking-tight" suppressHydrationWarning>
               {mounted
                 ? viewMode === "month"
-                  ? selectedDate.toLocaleDateString([], { month: "long", year: "numeric" })
-                  : selectedDate.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric", year: "numeric" })
+                  ? `${MONTH_NAMES[selectedDate.getMonth()]} ${selectedDate.getFullYear()}`
+                  : `${DAY_NAMES[selectedDate.getDay()]}, ${MONTH_NAMES_SHORT[selectedDate.getMonth()]} ${selectedDate.getDate()}, ${selectedDate.getFullYear()}`
                 : "Calendar View"}
             </h2>
-            {isTodayActive && (
+            {isTodayActive && viewMode !== "month" && (
               <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-500 border border-emerald-500/30 px-2 py-0.5 rounded-full">
                 Today
               </span>
@@ -619,16 +648,11 @@ export default function CalendarPage() {
             </span>
           </div>
 
-          <input
-            type="date"
-            value={mounted ? selectedDate.toISOString().split("T")[0] : ""}
-            onChange={(e) => {
-              if (e.target.value) {
-                const [y, m, d] = e.target.value.split("-").map(Number);
-                setSelectedDate(new Date(y, m - 1, d));
-              }
-            }}
-            className="bg-secondary border border-input rounded-lg px-2.5 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          <CustomDatePicker
+            value={selectedDate}
+            onChange={(d) => setSelectedDate(d)}
+            highlightDates={meetings.map((m) => m.scheduledStart)}
+            align="right"
           />
         </div>
       </div>
@@ -966,7 +990,7 @@ export default function CalendarPage() {
                           }`}
                         >
                           <div className="text-[11px] font-bold uppercase text-muted-foreground">
-                            {d.toLocaleDateString([], { weekday: "short" })}
+                            {DAY_NAMES_SHORT[d.getDay()]}
                           </div>
                           <div className={`text-base font-extrabold ${isToday ? "text-emerald-500" : isSelected ? "text-primary" : "text-foreground"}`}>
                             {d.getDate()}
@@ -1261,22 +1285,22 @@ export default function CalendarPage() {
                   <label className="block text-muted-foreground font-medium mb-1">
                     Date
                   </label>
-                  <input
-                    type="date"
+                  <CustomDatePicker
                     value={scheduledDate}
-                    onChange={(e) => setScheduledDate(e.target.value)}
-                    className="w-full bg-secondary border border-input text-foreground p-2.5 rounded-xl focus:outline-none focus:ring-1 focus:ring-ring"
+                    onChange={(_, dateStr) => setScheduledDate(dateStr)}
+                    className="w-full"
+                    align="left"
                   />
                 </div>
                 <div>
                   <label className="block text-muted-foreground font-medium mb-1">
                     Time
                   </label>
-                  <input
-                    type="time"
+                  <CustomTimePicker
                     value={scheduledTime}
-                    onChange={(e) => setScheduledTime(e.target.value)}
-                    className="w-full bg-secondary border border-input text-foreground p-2.5 rounded-xl focus:outline-none focus:ring-1 focus:ring-ring"
+                    onChange={(timeStr) => setScheduledTime(timeStr)}
+                    className="w-full"
+                    align="right"
                   />
                 </div>
               </div>
