@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/client';
+import { createClient, supabaseRestFetch } from '@/lib/supabase/client';
 import type { ChannelType } from '@chatx/types';
 
 export interface ChannelItem {
@@ -19,18 +19,14 @@ export interface UserDirectoryItem {
 }
 
 export async function fetchChannels(): Promise<ChannelItem[]> {
-  const supabase = createClient();
   try {
-    const { data, error } = await supabase
-      .from('channels')
-      .select('id, name, topic, type, is_private')
-      .order('created_at', { ascending: true });
-
-    if (error) {
-      console.warn("fetchChannels error:", error.message);
-      return [];
+    let data: any = await supabaseRestFetch('channels?select=id,name,topic,type,is_private&order=created_at.asc');
+    if (!data) {
+      const supabase = createClient();
+      const res = await supabase.from('channels').select('id, name, topic, type, is_private').order('created_at', { ascending: true });
+      data = res.data;
     }
-    if (!data) return [];
+    if (!data || !Array.isArray(data)) return [];
 
     return data.map((c: any) => ({
       id: c.id,
@@ -59,18 +55,31 @@ export async function createChannel(name: string, topic: string, type: ChannelTy
         .single();
       orgData = newOrg;
     }
+    
+    if (orgData?.id) {
+      const { data: newTeam } = await supabase
+        .from('teams')
+        .insert({ organization_id: orgData.id, name: 'General Engineering', slug: `engineering-${Date.now()}` })
+        .select('id')
+        .single();
+      teamData = newTeam;
+    }
+  }
 
-    const { data: newTeam } = await supabase
-      .from('teams')
-      .insert({ organization_id: orgData?.id, name: 'General Workspace', description: 'Workspace main team', is_private: false })
-      .select('id')
-      .single();
-    teamData = newTeam;
+  const payload: any = {
+    name,
+    topic,
+    type,
+    is_private: isPrivate,
+  };
+  
+  if (teamData?.id) {
+    payload.team_id = teamData.id;
   }
 
   const { data, error } = await supabase
     .from('channels')
-    .insert({ team_id: teamData.id, name, topic, type, is_private: isPrivate })
+    .insert(payload)
     .select()
     .single();
 
@@ -89,103 +98,31 @@ export async function createChannel(name: string, topic: string, type: ChannelTy
 
 /**
  * Fetch DM contacts for the sidebar.
- *
- * 1. Query existing DM conversations the current user is part of
- *    (conversations.type = 'direct' via conversation_members).
- * 2. For each DM, resolve the *other* participant's profile.
- * 3. Merge in any remaining profiles from the directory so the user
- *    can start new DMs with people they haven't messaged yet.
- * 4. Exclude the current user from the list.
+ * Queries user profiles from the organization directory.
  */
 export async function fetchDirectMessageContacts(currentUserId?: string): Promise<UserDirectoryItem[]> {
-  const supabase = createClient();
-  const contactMap = new Map<string, UserDirectoryItem>();
-
   try {
-    if (currentUserId) {
-      // Step 1: Find all conversations the current user belongs to
-      const { data: myMemberships } = await supabase
-        .from('conversation_members')
-        .select('conversation_id')
-        .eq('user_id', currentUserId);
-
-      if (myMemberships && myMemberships.length > 0) {
-        const myConvIds = myMemberships.map((m) => m.conversation_id);
-
-        // Step 2: Find which of those are 'direct' conversations
-        const { data: directConvs } = await supabase
-          .from('conversations')
-          .select('id')
-          .in('id', myConvIds)
-          .eq('type', 'direct');
-
-        if (directConvs && directConvs.length > 0) {
-          const directConvIds = directConvs.map((c) => c.id);
-
-          // Step 3: Find the other members in those direct conversations
-          const { data: otherMembers } = await supabase
-            .from('conversation_members')
-            .select('user_id, conversation_id')
-            .in('conversation_id', directConvIds)
-            .neq('user_id', currentUserId);
-
-          if (otherMembers && otherMembers.length > 0) {
-            const otherUserIds = [...new Set(otherMembers.map((m) => m.user_id))];
-
-            // Step 4: Fetch those users' profiles
-            const { data: dmProfiles } = await supabase
-              .from('profiles')
-              .select('id, full_name, username, email, status')
-              .in('id', otherUserIds);
-
-            if (dmProfiles) {
-              for (const p of dmProfiles) {
-                contactMap.set(p.id, {
-                  id: p.id,
-                  name: p.full_name || p.username || p.email || 'Team Member',
-                  username: p.username || 'user',
-                  email: p.email || '',
-                  role: 'Member',
-                  status: (p.status as UserDirectoryItem['status']) || 'offline',
-                });
-              }
-            }
-          }
-        }
-      }
+    const filter = currentUserId ? `&id=neq.${currentUserId}` : '';
+    let profiles: any = await supabaseRestFetch(`profiles?select=id,full_name,username,email,status&order=created_at.desc&limit=50${filter}`);
+    if (!profiles) {
+      const supabase = createClient();
+      let query = supabase.from('profiles').select('id, full_name, username, email, status').order('created_at', { ascending: false }).limit(50);
+      if (currentUserId) query = query.neq('id', currentUserId);
+      const res = await query;
+      profiles = res.data;
     }
+    if (!profiles || !Array.isArray(profiles)) return [];
 
-    // Step 5: Merge in all profiles from directory (online, away, dnd, and offline)
-    let profilesQuery = supabase
-      .from('profiles')
-      .select('id, full_name, username, email, status')
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    if (currentUserId) {
-      profilesQuery = profilesQuery.neq('id', currentUserId);
-    }
-
-    const { data: allProfiles } = await profilesQuery;
-
-    if (allProfiles) {
-      for (const p of allProfiles) {
-        if (!contactMap.has(p.id)) {
-          contactMap.set(p.id, {
-            id: p.id,
-            name: p.full_name || p.username || p.email || 'Team Member',
-            username: p.username || 'user',
-            email: p.email || '',
-            role: 'Member',
-            status: (p.status as UserDirectoryItem['status']) || 'offline',
-          });
-        }
-      }
-    }
-
-    return Array.from(contactMap.values());
-  } catch (err) {
-    console.warn("fetchDirectMessageContacts error:", err);
+    return profiles.map((p: any) => ({
+      id: p.id,
+      name: p.full_name || p.username || p.email || 'Team Member',
+      username: p.username || 'user',
+      email: p.email || '',
+      role: 'Member',
+      status: (p.status as UserDirectoryItem['status']) || 'offline',
+    }));
+  } catch (err: any) {
+    console.warn("fetchDirectMessageContacts catch:", err.message);
     return [];
   }
 }

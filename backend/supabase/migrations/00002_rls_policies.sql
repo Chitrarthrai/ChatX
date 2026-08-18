@@ -102,3 +102,24 @@ ON public.channels FOR SELECT TO public USING (true);
 CREATE POLICY "Channels can be created by everyone" 
 ON public.channels FOR INSERT TO public WITH CHECK (true);
 
+-- 7. Supabase Realtime Publication & Replica Identity
+ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.profiles;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.conversations;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.conversation_members;
+ALTER TABLE public.messages REPLICA IDENTITY FULL;
+ALTER TABLE public.profiles REPLICA IDENTITY FULL;
+
+-- 8. Messages Update RLS (for Delivery & Read Receipts)
+CREATE POLICY "Allow update on messages" 
+ON public.messages FOR UPDATE TO public 
+USING (true) WITH CHECK (true);
+
+-- 9. Message Reactions RLS & Realtime
+ALTER TABLE public.message_reactions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow select on message_reactions" ON public.message_reactions FOR SELECT TO public USING (true);
+CREATE POLICY "Allow insert on message_reactions" ON public.message_reactions FOR INSERT TO public WITH CHECK (true);
+CREATE POLICY "Allow delete on message_reactions" ON public.message_reactions FOR DELETE TO public USING (true);
+ALTER PUBLICATION supabase_realtime ADD TABLE public.message_reactions;
+ALTER TABLE public.message_reactions REPLICA IDENTITY FULL;
+

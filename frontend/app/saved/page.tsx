@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { createClient, supabaseRestFetch } from "@/lib/supabase/client";
+import { useAuth } from "@/components/auth-provider";
 import {
   Bookmark,
   ArrowLeft,
@@ -31,6 +32,7 @@ interface SavedItem {
 
 export default function SavedMessagesPage() {
   const router = useRouter();
+  const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [savedList, setSavedList] = useState<SavedItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,45 +46,74 @@ export default function SavedMessagesPage() {
       setError(null);
 
       try {
-        const supabase = createClient();
-        const { data: { user } } = await supabase.auth.getUser();
+        const activeUserId = user?.id || (typeof window !== "undefined" ? (() => {
+          try {
+            return JSON.parse(localStorage.getItem("chatx_active_user") || "{}")?.id;
+          } catch { return ""; }
+        })() : "");
 
-        if (user) {
-          const { data, error: fetchErr } = await supabase
-            .from("saved_messages")
-            .select("id, message_id, note, saved_at, content, author_name, channel_name")
-            .eq("user_id", user.id)
-            .order("saved_at", { ascending: false });
-
-          if (fetchErr || !data || data.length === 0) {
-            setSavedList([]);
-          } else {
-            setSavedList(
-              data.map((item: any) => {
-                const name = item.author_name || "Team Member";
-                return {
-                  id: item.id,
-                  messageId: item.message_id || "",
-                  senderName: name,
-                  senderAvatar: name.charAt(0).toUpperCase(),
-                  senderEmail: "",
-                  content: item.content || item.note || "Saved Message",
-                  channelName: item.channel_name || "Architecture & Engineering",
-                  savedAt: new Date(item.saved_at || Date.now()).toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit"
-                  }),
-                  note: item.note
-                };
-              })
-            );
-          }
-        } else {
+        if (!activeUserId) {
           setSavedList([]);
+          setLoading(false);
+          return;
         }
+
+        const savedRows: any = await supabaseRestFetch(
+          `saved_messages?user_id=eq.${activeUserId}&select=id,message_id,note,saved_at&order=saved_at.desc`
+        );
+
+        if (!savedRows || !Array.isArray(savedRows) || savedRows.length === 0) {
+          setSavedList([]);
+          setLoading(false);
+          return;
+        }
+
+        const msgIds = savedRows.map((r: any) => r.message_id).filter(Boolean);
+        let messagesData: any[] = [];
+        let profilesData: any[] = [];
+
+        if (msgIds.length > 0) {
+          const msgs: any = await supabaseRestFetch(
+            `messages?id=in.(${msgIds.join(',')})&select=id,content,sender_id,created_at`
+          );
+          messagesData = Array.isArray(msgs) ? msgs : [];
+
+          const senderIds = Array.from(new Set(messagesData.map((m: any) => m.sender_id).filter(Boolean)));
+          if (senderIds.length > 0) {
+            const profs: any = await supabaseRestFetch(
+              `profiles?id=in.(${senderIds.join(',')})&select=id,full_name,email,avatar_url`
+            );
+            profilesData = Array.isArray(profs) ? profs : [];
+          }
+        }
+
+        const profileMap = new Map<string, any>(profilesData.map((p: any) => [p.id, p]));
+        const msgMap = new Map<string, any>(messagesData.map((m: any) => [m.id, m]));
+
+        const items: SavedItem[] = savedRows.map((item: any) => {
+          const msg = msgMap.get(item.message_id);
+          const profile = msg ? profileMap.get(msg.sender_id) : null;
+          const name = profile?.full_name || profile?.email || "Team Member";
+          return {
+            id: item.id,
+            messageId: item.message_id || "",
+            senderName: name,
+            senderAvatar: name.charAt(0).toUpperCase(),
+            senderEmail: profile?.email || "",
+            content: msg?.content || item.note || "Saved Message",
+            channelName: "Workspace Conversation",
+            savedAt: new Date(item.saved_at || Date.now()).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit"
+            }),
+            note: item.note
+          };
+        });
+
+        setSavedList(items);
       } catch (err: any) {
         setError(err.message || "Failed to load saved messages.");
         setSavedList([]);
@@ -92,16 +123,13 @@ export default function SavedMessagesPage() {
     };
 
     fetchSaved();
-  }, []);
+  }, [user?.id]);
 
   const handleDelete = async (id: string) => {
     setDeletingId(id);
     try {
       const supabase = createClient();
-      const { error: delErr } = await supabase.from("saved_messages").delete().eq("id", id);
-      if (delErr) {
-        console.warn("Database deletion notice:", delErr.message);
-      }
+      await supabase.from("saved_messages").delete().eq("id", id);
       setSavedList((prev) => prev.filter((item) => item.id !== id));
     } catch {
       setSavedList((prev) => prev.filter((item) => item.id !== id));

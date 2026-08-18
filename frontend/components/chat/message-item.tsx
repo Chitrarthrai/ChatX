@@ -4,29 +4,69 @@ import React, { useState } from "react";
 import type { Message } from "@chatx/types";
 import { ReactionPicker } from "./reaction-picker";
 import { ForwardDialog } from "./forward-dialog";
-import { CheckCheck, Pin, Lock, MessageSquare, Smile, Copy, Check, Send, Bookmark, Download, FileText, Image as ImageIcon, Paperclip } from "lucide-react";
+import { 
+  CheckCheck, 
+  Pin, 
+  Lock, 
+  MessageSquare, 
+  Smile, 
+  Copy, 
+  Check, 
+  Send, 
+  Bookmark, 
+  Download, 
+  FileText, 
+  Image as ImageIcon, 
+  Edit3, 
+  Trash2, 
+  X,
+  Sparkles
+} from "lucide-react";
+
+export interface MessageReactionItem {
+  emoji: string;
+  count: number;
+  users: string[];
+}
 
 interface MessageItemProps {
   message: Message;
   isSelf: boolean;
   onReplyToThread: (msg: Message) => void;
+  reactions?: MessageReactionItem[];
+  onToggleReaction?: (messageId: string, emoji: string) => void;
+  currentUserId?: string;
+  onEditMessage?: (messageId: string, content: string) => void;
+  onDeleteMessage?: (messageId: string) => void;
+  onTogglePin?: (messageId: string, isPinned: boolean) => void;
+  onToggleSave?: (messageId: string, isSaved: boolean) => void;
+  isSaved?: boolean;
 }
 
-export function MessageItem({ message, isSelf, onReplyToThread }: MessageItemProps) {
+export function MessageItem({ 
+  message, 
+  isSelf, 
+  onReplyToThread, 
+  reactions = [], 
+  onToggleReaction, 
+  currentUserId,
+  onEditMessage,
+  onDeleteMessage,
+  onTogglePin,
+  onToggleSave,
+  isSaved = false
+}: MessageItemProps) {
   const [showReactionPicker, setShowReactionPicker] = useState(false);
   const [showForwardDialog, setShowForwardDialog] = useState(false);
-  const [reactions, setReactions] = useState<{ emoji: string; count: number }[]>([]);
   const [isCopied, setIsCopied] = useState(false);
-  const [isSaved, setIsSaved] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(message.content);
 
   const handleAddReaction = (emoji: string) => {
-    setReactions((prev) => {
-      const existing = prev.find((r) => r.emoji === emoji);
-      if (existing) {
-        return prev.map((r) => (r.emoji === emoji ? { ...r, count: r.count + 1 } : r));
-      }
-      return [...prev, { emoji, count: 1 }];
-    });
+    if (onToggleReaction) {
+      onToggleReaction(message.id, emoji);
+    }
+    setShowReactionPicker(false);
   };
 
   const handleCopyText = () => {
@@ -35,8 +75,19 @@ export function MessageItem({ message, isSelf, onReplyToThread }: MessageItemPro
     setTimeout(() => setIsCopied(false), 2000);
   };
 
-  const handleToggleSave = () => {
-    setIsSaved(!isSaved);
+  const handleSaveEdit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = editValue.trim();
+    if (!trimmed) return;
+    if (onEditMessage) {
+      onEditMessage(message.id, trimmed);
+    }
+    setIsEditing(false);
+  };
+
+  const handleCancelEdit = () => {
+    setEditValue(message.content);
+    setIsEditing(false);
   };
 
   const handleDownloadAttachment = (fileName: string) => {
@@ -63,7 +114,6 @@ Verified monorepo artifact bundle for ChatX collaboration platform.`;
   const senderName = message.sender?.fullName || message.sender?.username || "User";
   const formattedTime = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-  // Detect file attachment references in content
   const hasFileRef =
     message.type === "document" ||
     message.type === "image" ||
@@ -82,7 +132,6 @@ Verified monorepo artifact bundle for ChatX collaboration platform.`;
 
   return (
     <div className={`relative group flex items-start gap-3 ${isSelf ? "flex-row-reverse" : ""}`}>
-      {/* Sender Avatar */}
       <div
         className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-xs shrink-0 ${
           isSelf ? "bg-primary text-primary-foreground" : "bg-primary/20 text-primary"
@@ -91,79 +140,127 @@ Verified monorepo artifact bundle for ChatX collaboration platform.`;
         {senderName.charAt(0).toUpperCase()}
       </div>
 
-      {/* Message Bubble Container */}
       <div className={`space-y-1 max-w-xl ${isSelf ? "text-right" : ""}`}>
         <div className={`flex items-center gap-2 ${isSelf ? "justify-end" : ""}`}>
+          {message.isPinned && (
+            <span className="inline-flex items-center gap-1 text-[10px] text-amber-500 font-semibold bg-amber-500/10 px-1.5 py-0.5 rounded">
+              <Pin className="w-2.5 h-2.5" /> Pinned
+            </span>
+          )}
           <span className="text-xs font-semibold text-foreground">
             {senderName}
           </span>
           <span className="text-[10px] text-muted-foreground">
             {formattedTime}
           </span>
+          {message.isEdited && (
+            <span className="text-[10px] text-muted-foreground italic">(edited)</span>
+          )}
         </div>
 
-        {/* Bubble */}
-        <div
-          onDoubleClick={() => handleAddReaction("❤️")}
-          className={`relative p-3 rounded-xl text-xs leading-relaxed text-left shadow-xs transition-all cursor-pointer select-none ${
-            isSelf
-              ? "bg-primary text-primary-foreground"
-              : "bg-secondary text-foreground border border-border/50"
-          }`}
-          title="Double-click to quick-react ❤️"
-        >
-          {message.content}
-
-          {/* Render Downloadable Attachment Card if message contains a file */}
-          {hasFileRef && (
-            <div className={`mt-2.5 p-2.5 rounded-lg border flex items-center justify-between gap-3 ${
-              isSelf
-                ? "bg-primary-foreground/10 border-primary-foreground/20 text-primary-foreground"
-                : "bg-card border-border text-card-foreground"
-            }`}>
-              <div className="flex items-center gap-2.5 truncate">
-                <div className={`p-1.5 rounded-md ${isSelf ? "bg-primary-foreground/20 text-primary-foreground" : "bg-primary/10 text-primary"}`}>
-                  {detectedFileName.endsWith(".png") ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
-                </div>
-                <div className="flex flex-col truncate text-left">
-                  <span className="font-semibold text-xs truncate">{detectedFileName}</span>
-                  <span className="text-[10px] opacity-80">
-                    {detectedFileName.endsWith(".pdf") ? "2.4 MB • PDF Document" : "1.8 MB • PNG Asset"}
-                  </span>
-                </div>
-              </div>
+        {isEditing ? (
+          <form onSubmit={handleSaveEdit} className="bg-card border border-primary rounded-xl p-2 shadow-md min-w-[260px] text-left">
+            <textarea
+              autoFocus
+              rows={2}
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSaveEdit();
+                } else if (e.key === "Escape") {
+                  handleCancelEdit();
+                }
+              }}
+              className="w-full bg-transparent text-xs text-foreground focus:outline-none resize-none"
+            />
+            <div className="flex items-center justify-end gap-1.5 mt-1.5 pt-1.5 border-t border-border">
               <button
-                onClick={() => handleDownloadAttachment(detectedFileName)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all shrink-0 shadow-sm ${
-                  isSelf
-                    ? "bg-white text-primary hover:bg-white/90"
-                    : "bg-primary text-primary-foreground hover:opacity-90"
-                }`}
-                title={`Download ${detectedFileName}`}
+                type="button"
+                onClick={handleCancelEdit}
+                className="px-2 py-0.5 rounded text-[11px] text-muted-foreground hover:bg-secondary transition-all"
               >
-                <Download className="w-3.5 h-3.5" />
-                <span>Download</span>
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-2.5 py-0.5 rounded bg-primary text-primary-foreground font-semibold text-[11px] hover:opacity-90 transition-all shadow-xs"
+              >
+                Save
               </button>
             </div>
-          )}
+          </form>
+        ) : (
+          <div
+            onDoubleClick={() => handleAddReaction("❤️")}
+            className={`relative p-3 rounded-xl text-xs leading-relaxed text-left shadow-xs transition-all cursor-pointer select-none ${
+              isSelf
+                ? "bg-primary text-primary-foreground"
+                : "bg-secondary text-foreground border border-border/50"
+            }`}
+            title="Double-click to quick-react ❤️"
+          >
+            {message.content}
 
-          {/* Reactions Row */}
-          {reactions.length > 0 && (
-            <div className="flex items-center gap-1 mt-2 pt-1 border-t border-black/10">
-              {reactions.map((r, idx) => (
-                <span
-                  key={idx}
-                  className="inline-flex items-center gap-1 bg-background/80 text-foreground px-2 py-0.5 rounded-full text-[11px] font-medium border border-border"
+            {hasFileRef && (
+              <div className={`mt-2.5 p-2.5 rounded-lg border flex items-center justify-between gap-3 ${
+                isSelf
+                  ? "bg-primary-foreground/10 border-primary-foreground/20 text-primary-foreground"
+                  : "bg-card border-border text-card-foreground"
+              }`}>
+                <div className="flex items-center gap-2.5 truncate">
+                  <div className={`p-1.5 rounded-md ${isSelf ? "bg-primary-foreground/20 text-primary-foreground" : "bg-primary/10 text-primary"}`}>
+                    {detectedFileName.endsWith(".png") ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
+                  </div>
+                  <div className="flex flex-col truncate text-left">
+                    <span className="font-semibold text-xs truncate">{detectedFileName}</span>
+                    <span className="text-[10px] opacity-80">
+                      {detectedFileName.endsWith(".pdf") ? "2.4 MB • PDF Document" : "1.8 MB • PNG Asset"}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleDownloadAttachment(detectedFileName)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all shrink-0 shadow-sm ${
+                    isSelf
+                      ? "bg-white text-primary hover:bg-white/90"
+                      : "bg-primary text-primary-foreground hover:opacity-90"
+                  }`}
+                  title={`Download ${detectedFileName}`}
                 >
-                  <span>{r.emoji}</span>
-                  <span>{r.count}</span>
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download</span>
+                </button>
+              </div>
+            )}
 
-        {/* Message Status Bar */}
+            {reactions && reactions.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1 mt-2 pt-1 border-t border-black/10">
+                {reactions.map((r, idx) => {
+                  const isReactedByMe = currentUserId ? r.users.includes(currentUserId) : false;
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => onToggleReaction && onToggleReaction(message.id, r.emoji)}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-all ${
+                        isReactedByMe
+                          ? "bg-primary/20 text-primary border-primary/40 shadow-sm"
+                          : "bg-background/80 text-foreground border-border hover:bg-secondary"
+                      }`}
+                      title={isReactedByMe ? `Remove ${r.emoji}` : `React with ${r.emoji}`}
+                    >
+                      <span>{r.emoji}</span>
+                      <span>{r.count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {isSelf && (
           <div className="flex items-center justify-end gap-1 text-[10px] text-muted-foreground mt-0.5">
             {message.status === "read" ? (
@@ -186,7 +283,6 @@ Verified monorepo artifact bundle for ChatX collaboration platform.`;
         )}
       </div>
 
-      {/* Action Toolbar on Hover */}
       <div
         className={`absolute top-0 opacity-0 group-hover:opacity-100 transition-opacity bg-card border border-border rounded-lg p-1 shadow-md flex items-center gap-1 z-10 ${
           isSelf ? "right-12" : "left-12"
@@ -199,6 +295,28 @@ Verified monorepo artifact bundle for ChatX collaboration platform.`;
         >
           <Smile className="w-3.5 h-3.5" />
         </button>
+
+        {isSelf && (
+          <button
+            onClick={() => {
+              setEditValue(message.content);
+              setIsEditing(!isEditing);
+            }}
+            className="p-1 hover:bg-secondary rounded text-muted-foreground hover:text-foreground"
+            title="Edit message"
+          >
+            <Edit3 className="w-3.5 h-3.5" />
+          </button>
+        )}
+
+        <button
+          onClick={() => onTogglePin && onTogglePin(message.id, !message.isPinned)}
+          className={`p-1 hover:bg-secondary rounded ${message.isPinned ? "text-amber-500 font-bold" : "text-muted-foreground hover:text-foreground"}`}
+          title={message.isPinned ? "Unpin message" : "Pin message"}
+        >
+          <Pin className="w-3.5 h-3.5" />
+        </button>
+
         <button
           onClick={() => onReplyToThread(message)}
           className="p-1 hover:bg-secondary rounded text-muted-foreground hover:text-foreground"
@@ -206,6 +324,7 @@ Verified monorepo artifact bundle for ChatX collaboration platform.`;
         >
           <MessageSquare className="w-3.5 h-3.5" />
         </button>
+
         <button
           onClick={() => setShowForwardDialog(true)}
           className="p-1 hover:bg-secondary rounded text-muted-foreground hover:text-foreground"
@@ -213,13 +332,15 @@ Verified monorepo artifact bundle for ChatX collaboration platform.`;
         >
           <Send className="w-3.5 h-3.5" />
         </button>
+
         <button
-          onClick={handleToggleSave}
+          onClick={() => onToggleSave && onToggleSave(message.id, !isSaved)}
           className={`p-1 hover:bg-secondary rounded ${isSaved ? "text-amber-500 font-bold" : "text-muted-foreground hover:text-foreground"}`}
           title={isSaved ? "Saved" : "Save message"}
         >
-          <Bookmark className="w-3.5 h-3.5" />
+          <Bookmark className={`w-3.5 h-3.5 ${isSaved ? "fill-amber-500 text-amber-500" : ""}`} />
         </button>
+
         <button
           onClick={handleCopyText}
           className="p-1 hover:bg-secondary rounded text-muted-foreground hover:text-foreground"
@@ -227,9 +348,18 @@ Verified monorepo artifact bundle for ChatX collaboration platform.`;
         >
           {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
         </button>
+
+        {isSelf && (
+          <button
+            onClick={() => onDeleteMessage && onDeleteMessage(message.id)}
+            className="p-1 hover:bg-destructive/10 rounded text-muted-foreground hover:text-destructive transition-all"
+            title="Delete message"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
-      {/* Floating Reaction Picker */}
       {showReactionPicker && (
         <div className={`absolute -top-10 z-30 ${isSelf ? "right-12" : "left-12"}`}>
           <ReactionPicker
@@ -239,7 +369,6 @@ Verified monorepo artifact bundle for ChatX collaboration platform.`;
         </div>
       )}
 
-      {/* Forwarding Dialog */}
       <ForwardDialog
         isOpen={showForwardDialog}
         messageContent={message.content}

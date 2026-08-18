@@ -13,7 +13,24 @@ import { AIDrawer } from "@/components/ai/ai-drawer";
 import { MessageItem } from "@/components/chat/message-item";
 import { signOut } from "@/services/auth";
 import { fetchChannels, createChannel, fetchDirectMessageContacts } from "@/services/channels";
-import { sendMessage, subscribeToMessages, fetchMessages, markMessagesAsRead, getOrCreateDirectConversation, getOrCreateChannelConversation } from "@/services/messages";
+import { 
+  sendMessage, 
+  subscribeToMessages, 
+  fetchMessages, 
+  markMessagesAsRead, 
+  getOrCreateDirectConversation, 
+  getOrCreateChannelConversation,
+  fetchReactionsForMessages,
+  addReaction,
+  removeReaction,
+  subscribeToReactions,
+  editMessage,
+  deleteMessage,
+  togglePinMessage,
+  saveMessage,
+  unsaveMessage,
+  fetchSavedMessageIds
+} from "@/services/messages";
 import { uploadAttachment } from "@/services/storage";
 import { createClient } from "@/lib/supabase/client";
 import type { ChannelType, Message } from "@chatx/types";
@@ -43,6 +60,7 @@ import {
   ShieldCheck,
   ChevronRight,
   Pin,
+  Bookmark,
   Lock,
   Unlock,
   LogIn,
@@ -121,10 +139,12 @@ export default function DashboardPage() {
           setSelectedChat(targetChat);
           if (activeDM) localStorage.removeItem("chatx_active_dm");
         }
+        loadWorkspaceData();
       } else {
         const savedMode = localStorage.getItem("chatx_view_mode");
         if (savedMode === "workspace_preview") {
           setViewMode("workspace");
+          loadWorkspaceData();
         } else {
           setViewMode("landing");
         }
@@ -194,7 +214,9 @@ export default function DashboardPage() {
 
   const loadWorkspaceData = async () => {
     try {
+      console.error("[ChatX Debug] loadWorkspaceData started");
       const channelData = await fetchChannels();
+      console.error("[ChatX Debug] fetchChannels returned:", channelData?.length);
       if (channelData && channelData.length > 0) {
         setChannels(channelData);
         const savedChat = typeof window !== "undefined" ? localStorage.getItem("chatx_active_chat") : null;
@@ -212,20 +234,36 @@ export default function DashboardPage() {
       })() : "");
 
       const contacts = await fetchDirectMessageContacts(effectiveUserId || "");
+      console.error("[ChatX Debug] contacts returned:", contacts?.length);
       if (contacts && contacts.length > 0) {
         setDirectMessages(contacts.map((p) => ({ id: p.id, name: p.name, status: p.status, role: p.role })));
       }
-      console.warn("[ChatX Workspace] Loaded channels:", channelData?.length, "DMs:", contacts?.length);
     } catch (err) {
-      console.warn("Error loading channels and contacts:", err);
+      console.error("[ChatX Debug] Error loading channels and contacts:", err);
     }
   };
 
   useEffect(() => {
     loadWorkspaceData();
+    const timer = setTimeout(() => {
+      loadWorkspaceData();
+    }, 400);
+    return () => clearTimeout(timer);
   }, [viewMode, user, profile, mounted]);
 
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [hasMoreMessages, setHasMoreMessages] = useState<Record<string, boolean>>({});
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+
+  const scrollToBottom = (smooth = false) => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
+    }
+  };
+
   const [messagesByChannel, setMessagesByChannel] = useState<Record<string, Message[]>>({});
+  const [messageReactions, setMessageReactions] = useState<Record<string, { emoji: string; count: number; users: string[] }[]>>({});
 
   // Helper: resolve the real conversation UUID for the current selectedChat.
   // channels.id = conversations.id
@@ -238,8 +276,20 @@ export default function DashboardPage() {
       }
       activeChan = allChans.find((c) => c.name === selectedChat);
     }
-    const activeDM = directMessages.find((dm) => dm.name === selectedChat);
-    const currentUserId = user?.id || profile?.id;
+    const currentUserId = user?.id || profile?.id || (typeof window !== "undefined" ? (() => {
+      try {
+        return JSON.parse(localStorage.getItem("chatx_active_user") || "{}")?.id;
+      } catch { return ""; }
+    })() : "");
+
+    let activeDM = directMessages.find((dm) => dm.name === selectedChat || dm.id === selectedChat);
+    if (!activeDM && !activeChan) {
+      const allDMs = await fetchDirectMessageContacts(currentUserId || "");
+      if (allDMs && allDMs.length > 0 && directMessages.length === 0) {
+        setDirectMessages(allDMs);
+      }
+      activeDM = allDMs.find((dm) => dm.name === selectedChat || dm.id === selectedChat);
+    }
 
     if (activeChan?.id) {
       return await getOrCreateChannelConversation(activeChan.id, currentUserId, activeChan.name);
@@ -250,50 +300,340 @@ export default function DashboardPage() {
     return null;
   };
 
+  // Reverse infinite scroll: fetch older messages when scrolling to top
+  const handleScroll = async () => {
+    const container = messagesContainerRef.current;
+    if (!container || isLoadingOlder) return;
+
+    if (container.scrollTop <= 40 && hasMoreMessages[selectedChat]) {
+      const currentList = messagesByChannel[selectedChat] || [];
+      if (currentList.length === 0) return;
+
+      const oldestMessage = currentList[0];
+      setIsLoadingOlder(true);
+
+      const targetConvId = await resolveActiveConversationId();
+      if (!targetConvId) {
+        setIsLoadingOlder(false);
+        return;
+      }
+
+      const prevScrollHeight = container.scrollHeight;
+      const older = await fetchMessages(targetConvId, 25, oldestMessage.createdAt);
+
+      if (older.length < 25) {
+        setHasMoreMessages((prev) => ({ ...prev, [selectedChat]: false }));
+      }
+
+      if (older.length > 0) {
+        setMessagesByChannel((prev) => {
+          const existing = prev[selectedChat] || [];
+          const newOlder = older.filter((om) => !existing.some((em) => em.id === om.id));
+          return {
+            ...prev,
+            [selectedChat]: [...newOlder, ...existing],
+          };
+        });
+
+        const validOlderIds = older.map((m) => m.id).filter((id) => id.includes("-"));
+        if (validOlderIds.length > 0) {
+          fetchReactionsForMessages(validOlderIds).then((rx) => {
+            if (rx) {
+              setMessageReactions((prev) => ({ ...prev, ...rx }));
+            }
+          });
+        }
+
+        // Preserve scroll offset so content doesn't jump
+        requestAnimationFrame(() => {
+          if (container) {
+            container.scrollTop = container.scrollHeight - prevScrollHeight;
+          }
+        });
+      }
+      setIsLoadingOlder(false);
+    }
+  };
+
+  // Global Realtime Reaction Stream Subscription
+  useEffect(() => {
+    const rxSub = subscribeToReactions((event) => {
+      const { eventType, reaction } = event;
+      if (!reaction || !reaction.messageId) return;
+
+      setMessageReactions((prev) => {
+        const currentList = prev[reaction.messageId] || [];
+        if (eventType === "DELETE") {
+          const updated = currentList
+            .map((r) => {
+              if (r.emoji === reaction.emoji) {
+                const nextUsers = r.users.filter((u) => u !== reaction.userId);
+                return { ...r, count: nextUsers.length, users: nextUsers };
+              }
+              return r;
+            })
+            .filter((r) => r.count > 0);
+          return { ...prev, [reaction.messageId]: updated };
+        }
+
+        // INSERT
+        const existing = currentList.find((r) => r.emoji === reaction.emoji);
+        if (existing) {
+          if (existing.users.includes(reaction.userId)) return prev;
+          const updated = currentList.map((r) =>
+            r.emoji === reaction.emoji
+              ? { ...r, count: r.count + 1, users: [...r.users, reaction.userId] }
+              : r
+          );
+          return { ...prev, [reaction.messageId]: updated };
+        }
+
+        return {
+          ...prev,
+          [reaction.messageId]: [...currentList, { emoji: reaction.emoji, count: 1, users: [reaction.userId] }],
+        };
+      });
+    });
+
+    return () => {
+      const supabase = createClient();
+      supabase.removeChannel(rxSub);
+    };
+  }, []);
+
+  const handleToggleReaction = async (messageId: string, emoji: string) => {
+    const activeUserId = user?.id || profile?.id || (typeof window !== "undefined" ? (() => {
+      try {
+        return JSON.parse(localStorage.getItem("chatx_active_user") || "{}")?.id;
+      } catch { return ""; }
+    })() : "");
+    if (!activeUserId || !messageId) return;
+
+    const currentList = messageReactions[messageId] || [];
+    const existing = currentList.find((r) => r.emoji === emoji);
+    const hasReacted = existing?.users?.includes(activeUserId);
+
+    // Optimistic local UI update
+    setMessageReactions((prev) => {
+      const list = prev[messageId] || [];
+      if (hasReacted) {
+        const updated = list
+          .map((r) =>
+            r.emoji === emoji
+              ? { ...r, count: r.count - 1, users: r.users.filter((u) => u !== activeUserId) }
+              : r
+          )
+          .filter((r) => r.count > 0);
+        return { ...prev, [messageId]: updated };
+      }
+      if (existing) {
+        const updated = list.map((r) =>
+          r.emoji === emoji
+            ? { ...r, count: r.count + 1, users: [...r.users, activeUserId] }
+            : r
+        );
+        return { ...prev, [messageId]: updated };
+      }
+      return { ...prev, [messageId]: [...list, { emoji, count: 1, users: [activeUserId] }] };
+    });
+
+    try {
+      if (hasReacted) {
+        await removeReaction(messageId, activeUserId, emoji);
+      } else {
+        await addReaction(messageId, activeUserId, emoji);
+      }
+    } catch (err) {
+      console.warn("Reaction toggle error:", err);
+    }
+  };
+
+  // Saved messages loader for current user
+  const [savedMessageIds, setSavedMessageIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const activeUserId = user?.id || profile?.id;
+    if (activeUserId) {
+      fetchSavedMessageIds(activeUserId).then((ids) => {
+        if (ids) setSavedMessageIds(new Set(ids));
+      });
+    }
+  }, [user?.id, profile?.id]);
+
+  const handleEditMessage = async (messageId: string, newContent: string) => {
+    setMessagesByChannel((prev) => {
+      const list = prev[selectedChat] || [];
+      return {
+        ...prev,
+        [selectedChat]: list.map((m) =>
+          m.id === messageId ? { ...m, content: newContent, isEdited: true, updatedAt: new Date().toISOString() } : m
+        ),
+      };
+    });
+
+    try {
+      await editMessage(messageId, newContent);
+    } catch (err) {
+      console.warn("Edit message error:", err);
+    }
+  };
+
+  const handleDeleteMessage = async (messageId: string) => {
+    setMessagesByChannel((prev) => {
+      const list = prev[selectedChat] || [];
+      return {
+        ...prev,
+        [selectedChat]: list.filter((m) => m.id !== messageId),
+      };
+    });
+
+    try {
+      await deleteMessage(messageId);
+    } catch (err) {
+      console.warn("Delete message error:", err);
+    }
+  };
+
+  const handleTogglePin = async (messageId: string, isPinned: boolean) => {
+    setMessagesByChannel((prev) => {
+      const list = prev[selectedChat] || [];
+      return {
+        ...prev,
+        [selectedChat]: list.map((m) => (m.id === messageId ? { ...m, isPinned } : m)),
+      };
+    });
+
+    try {
+      await togglePinMessage(messageId, isPinned);
+    } catch (err) {
+      console.warn("Toggle pin error:", err);
+    }
+  };
+
+  const handleToggleSave = async (messageId: string, shouldSave: boolean) => {
+    const activeUserId = user?.id || profile?.id || (typeof window !== "undefined" ? (() => {
+      try {
+        return JSON.parse(localStorage.getItem("chatx_active_user") || "{}")?.id;
+      } catch { return ""; }
+    })() : "");
+    if (!activeUserId || !messageId) return;
+
+    setSavedMessageIds((prev) => {
+      const next = new Set(prev);
+      if (shouldSave) next.add(messageId);
+      else next.delete(messageId);
+      return next;
+    });
+
+    try {
+      if (shouldSave) {
+        await saveMessage(messageId, activeUserId);
+      } else {
+        await unsaveMessage(messageId, activeUserId);
+      }
+    } catch (err) {
+      console.warn("Toggle save error:", err);
+    }
+  };
+
   // Dynamic message query from Supabase database whenever selectedChat changes
   useEffect(() => {
     if (!selectedChat) return;
 
-    let subscription: ReturnType<typeof subscribeToMessages> | null = null;
+    let isMounted = true;
+    let channelSubscription: ReturnType<typeof subscribeToMessages> | null = null;
+    const supabase = createClient();
 
     const resolveAndFetch = async () => {
       const targetConvId = await resolveActiveConversationId();
-      if (!targetConvId) return;
+      if (!targetConvId || !isMounted) return;
 
-      const currentUserId = user?.id || profile?.id;
-      if (currentUserId) {
+      const currentUserId = user?.id || profile?.id || (typeof window !== "undefined" ? (() => {
+        try {
+          return JSON.parse(localStorage.getItem("chatx_active_user") || "{}")?.id;
+        } catch { return ""; }
+      })() : "");
+      if (targetConvId) {
         markMessagesAsRead(targetConvId, currentUserId).catch(() => {});
       }
 
-      const fetched = await fetchMessages(targetConvId);
-      if (fetched) {
+      const fetched = await fetchMessages(targetConvId, 25);
+      if (fetched && isMounted) {
         setMessagesByChannel((prev) => ({
           ...prev,
           [selectedChat]: fetched,
         }));
+        setHasMoreMessages((prev) => ({
+          ...prev,
+          [selectedChat]: fetched.length >= 25,
+        }));
+        // Scroll to bottom immediately on chat opening
+        setTimeout(() => scrollToBottom(false), 50);
+
+        const validIds = fetched.map((m) => m.id).filter((id) => id.includes("-"));
+        if (validIds.length > 0) {
+          fetchReactionsForMessages(validIds).then((rx) => {
+            if (isMounted && rx) {
+              setMessageReactions((prev) => ({ ...prev, ...rx }));
+            }
+          });
+        }
       }
 
+      if (!isMounted) return;
+
       // Subscribe to live Realtime message updates for this conversation
-      subscription = subscribeToMessages(targetConvId, (newMsg) => {
+      channelSubscription = subscribeToMessages(targetConvId, (newMsg) => {
+        if (!isMounted) return;
         setMessagesByChannel((prev) => {
           const currentList = prev[selectedChat] || [];
-          if (currentList.some((m) => m.id === newMsg.id)) return prev;
+          const idx = currentList.findIndex((m) => 
+            m.id === newMsg.id || 
+            (m.senderId === newMsg.senderId && m.content === newMsg.content)
+          );
+          if (idx >= 0) {
+            // Live UPDATE (status changed, content edited, pinned, or optimistic synced)
+            const updated = [...currentList];
+            updated[idx] = {
+              ...updated[idx],
+              ...newMsg,
+              sender: newMsg.sender || updated[idx].sender,
+            };
+            return {
+              ...prev,
+              [selectedChat]: updated,
+            };
+          }
+          // Live INSERT (new incoming message from another user)
           return {
             ...prev,
             [selectedChat]: [...currentList, newMsg],
           };
         });
+
+        // Auto-mark incoming message as read if active conversation and not sender
+        const activeUserId = user?.id || profile?.id || (typeof window !== "undefined" ? (() => {
+          try {
+            return JSON.parse(localStorage.getItem("chatx_active_user") || "{}")?.id;
+          } catch { return ""; }
+        })() : "");
+        if (activeUserId && newMsg.senderId !== activeUserId) {
+          markMessagesAsRead(targetConvId, activeUserId).catch(() => {});
+        }
+
+        // Auto-scroll on new message
+        setTimeout(() => scrollToBottom(true), 50);
       });
     };
 
     resolveAndFetch().catch((err) => console.warn("Database message fetch:", err));
 
     return () => {
-      if (subscription) {
-        subscription.unsubscribe();
+      isMounted = false;
+      if (channelSubscription) {
+        supabase.removeChannel(channelSubscription);
       }
     };
-  }, [selectedChat, channels, directMessages, user, profile]);
+  }, [selectedChat, user?.id]);
 
   const handleCreateChannel = async (newChannel: { name: string; topic: string; type: ChannelType; isPrivate: boolean }) => {
     const created = await createChannel(newChannel.name, newChannel.topic, newChannel.type, newChannel.isPrivate);
@@ -365,7 +705,11 @@ export default function DashboardPage() {
       localStorage.removeItem(`chatx_draft_${selectedChat}`);
     }
 
-    const senderUserId = user?.id || profile?.id;
+    const senderUserId = user?.id || profile?.id || (typeof window !== "undefined" ? (() => {
+      try {
+        return JSON.parse(localStorage.getItem("chatx_active_user") || "{}")?.id;
+      } catch { return ""; }
+    })() : "");
     if (!senderUserId) return;
 
     const activeConvId = await resolveActiveConversationId();
@@ -399,18 +743,24 @@ export default function DashboardPage() {
       ...prev,
       [selectedChat]: [...(prev[selectedChat] || []), newMsg],
     }));
+    setTimeout(() => scrollToBottom(true), 50);
 
     try {
-      await sendMessage(
+      const persistedMsg = await sendMessage(
         { conversationId: activeConvId, content: contentText, type: "text" },
         senderUserId
       );
-      const fetchedMsgs = await fetchMessages(activeConvId);
-      if (fetchedMsgs && fetchedMsgs.length > 0) {
-        setMessagesByChannel((prev) => ({
-          ...prev,
-          [selectedChat]: fetchedMsgs,
-        }));
+      if (persistedMsg && persistedMsg.id) {
+        setMessagesByChannel((prev) => {
+          const currentList = prev[selectedChat] || [];
+          const optIdx = currentList.findIndex((m) => m.id === newMsg.id);
+          if (optIdx >= 0) {
+            const updated = [...currentList];
+            updated[optIdx] = { ...newMsg, ...persistedMsg };
+            return { ...prev, [selectedChat]: updated };
+          }
+          return prev;
+        });
       }
     } catch (err) {
       console.warn("Message sending:", err);
@@ -464,6 +814,7 @@ export default function DashboardPage() {
       ...prev,
       [selectedChat]: [...(prev[selectedChat] || []), attachmentMsg],
     }));
+    setTimeout(() => scrollToBottom(true), 50);
 
     try {
       try {
@@ -489,14 +840,6 @@ export default function DashboardPage() {
         { conversationId: activeConvId, content: contentText, type: msgType },
         senderUserId
       );
-
-      const fetchedMsgs = await fetchMessages(activeConvId);
-      if (fetchedMsgs && fetchedMsgs.length > 0) {
-        setMessagesByChannel((prev) => ({
-          ...prev,
-          [selectedChat]: fetchedMsgs,
-        }));
-      }
     } catch (err) {
       console.warn("Error uploading file message:", err);
     }
@@ -541,19 +884,13 @@ export default function DashboardPage() {
         ...prev,
         [selectedChat]: [...(prev[selectedChat] || []), voiceMsg],
       }));
+      setTimeout(() => scrollToBottom(true), 50);
 
       try {
         await sendMessage(
           { conversationId: activeConvId, content: voiceContent, type: "voice" },
           senderUserId
         );
-        const fetchedMsgs = await fetchMessages(activeConvId);
-        if (fetchedMsgs && fetchedMsgs.length > 0) {
-          setMessagesByChannel((prev) => ({
-            ...prev,
-            [selectedChat]: fetchedMsgs,
-          }));
-        }
       } catch (err) {
         console.warn("Voice message send error:", err);
       }
@@ -818,6 +1155,14 @@ export default function DashboardPage() {
               className="p-2.5 rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground transition-all"
             >
               <Calendar className="w-5 h-5" />
+            </Link>
+
+            <Link
+              href="/saved"
+              title="Saved Messages & Bookmarks"
+              className="p-2.5 rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground transition-all"
+            >
+              <Bookmark className="w-5 h-5" />
             </Link>
 
             <Link
@@ -1097,8 +1442,21 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        {/* Dynamic Chat Messages Feed */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* Dynamic Chat Messages Feed with Reverse Infinite Scroll */}
+        <div
+          ref={messagesContainerRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto p-6 space-y-6"
+        >
+          {isLoadingOlder && (
+            <div className="flex justify-center py-2 animate-in fade-in">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground bg-secondary/80 px-3 py-1.5 rounded-full border border-border">
+                <div className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                <span>Loading earlier messages...</span>
+              </div>
+            </div>
+          )}
+
           <div className="bg-card p-4 rounded-xl border border-border shadow-sm flex items-start gap-4">
             <div className="p-2.5 bg-primary/10 rounded-lg text-primary">
               <Sparkles className="w-5 h-5" />
@@ -1117,9 +1475,18 @@ export default function DashboardPage() {
               message={msg}
               isSelf={msg.senderId === user?.id || msg.sender?.fullName === "You"}
               onReplyToThread={(m) => setActiveThreadMessage(m)}
+              reactions={messageReactions[msg.id] || []}
+              onToggleReaction={handleToggleReaction}
+              currentUserId={user?.id || profile?.id}
+              onEditMessage={handleEditMessage}
+              onDeleteMessage={handleDeleteMessage}
+              onTogglePin={handleTogglePin}
+              onToggleSave={handleToggleSave}
+              isSaved={savedMessageIds.has(msg.id)}
             />
           ))}
           <TypingIndicator />
+          <div ref={messagesEndRef} />
         </div>
 
         {/* Message Input Box */}
