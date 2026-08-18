@@ -11,6 +11,7 @@ import { LockDialog } from "@/components/chat/lock-dialog";
 import { ThreadDrawer } from "@/components/chat/thread-drawer";
 import { AIDrawer } from "@/components/ai/ai-drawer";
 import { MessageItem } from "@/components/chat/message-item";
+import { ScheduleChatMeetingDialog } from "@/components/meetings/schedule-chat-meeting-dialog";
 import { signOut } from "@/services/auth";
 import { fetchChannels, createChannel, fetchDirectMessageContacts } from "@/services/channels";
 import { 
@@ -79,7 +80,8 @@ import {
   Shield,
   Globe,
   Maximize2,
-  Archive
+  Archive,
+  RotateCcw
 } from "lucide-react";
 import { LandingPage } from "@/components/landing-page";
 import { SiteTour } from "@/components/site-tour";
@@ -106,6 +108,12 @@ export default function DashboardPage() {
   const [isCreateChannelOpen, setIsCreateChannelOpen] = useState(false);
   const [isPollOpen, setIsPollOpen] = useState(false);
   const [isLockOpen, setIsLockOpen] = useState(false);
+  const [isScheduleChatOpen, setIsScheduleChatOpen] = useState(false);
+  const [lockedChats, setLockedChats] = useState<Record<string, string>>({});
+  const [unlockedChats, setUnlockedChats] = useState<string[]>([]);
+  const [enteredPin, setEnteredPin] = useState("");
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [archivedChats, setArchivedChats] = useState<string[]>([]);
   const [isDeviceSettingsOpen, setIsDeviceSettingsOpen] = useState(false);
   const [isAIDrawerOpen, setIsAIDrawerOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"messages" | "teams" | "meetings" | "ai">("messages");
@@ -121,20 +129,53 @@ export default function DashboardPage() {
   const [isHandRaised, setIsHandRaised] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
 
+  // Load saved locks and archived conversations from localStorage
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlChat = urlParams.get("chat");
+      if (urlChat) {
+        setSelectedChat(urlChat);
+        localStorage.setItem("chatx_active_chat", urlChat);
+        localStorage.setItem("chatx_view_mode", "workspace");
+        setViewMode("workspace");
+      }
+
+      const savedLocks = localStorage.getItem("chatx_locked_chats");
+      if (savedLocks) {
+        try {
+          setLockedChats(JSON.parse(savedLocks));
+        } catch {
+          setLockedChats({});
+        }
+      }
+      const savedArchived = localStorage.getItem("chatx_archived_chats");
+      if (savedArchived) {
+        try {
+          setArchivedChats(JSON.parse(savedArchived));
+        } catch {
+          setArchivedChats([]);
+        }
+      }
+    }
+  }, []);
+
   useEffect(() => {
     setMounted(true);
 
     if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlChat = urlParams.get("chat");
       const savedMode = localStorage.getItem("chatx_view_mode");
       const savedUserStr = localStorage.getItem("chatx_active_user");
-      if (user || savedUserStr || savedMode === "workspace") {
+      if (user || savedUserStr || savedMode === "workspace" || urlChat) {
         setViewMode("workspace");
         setIsAuthOpen(false);
         localStorage.setItem("chatx_view_mode", "workspace");
 
         const activeDM = localStorage.getItem("chatx_active_dm");
         const savedChat = localStorage.getItem("chatx_active_chat");
-        const targetChat = activeDM || savedChat;
+        const targetChat = urlChat || activeDM || savedChat;
         if (targetChat) {
           setSelectedChat(targetChat);
           if (activeDM) localStorage.removeItem("chatx_active_dm");
@@ -214,17 +255,15 @@ export default function DashboardPage() {
 
   const loadWorkspaceData = async () => {
     try {
-      console.error("[ChatX Debug] loadWorkspaceData started");
+      const urlParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+      const urlChat = urlParams?.get("chat");
+      const savedChat = typeof window !== "undefined" ? localStorage.getItem("chatx_active_chat") : null;
+      const activeDM = typeof window !== "undefined" ? localStorage.getItem("chatx_active_dm") : null;
+      const preferredChat = urlChat || activeDM || savedChat;
+
       const channelData = await fetchChannels();
-      console.error("[ChatX Debug] fetchChannels returned:", channelData?.length);
       if (channelData && channelData.length > 0) {
         setChannels(channelData);
-        const savedChat = typeof window !== "undefined" ? localStorage.getItem("chatx_active_chat") : null;
-        if (savedChat && (channelData.some((c) => c.name === savedChat) || directMessages.some((dm) => dm.name === savedChat))) {
-          setSelectedChat(savedChat);
-        } else {
-          setSelectedChat(channelData[0].name);
-        }
       }
 
       const effectiveUserId = user?.id || profile?.id || (typeof window !== "undefined" ? (() => {
@@ -234,9 +273,15 @@ export default function DashboardPage() {
       })() : "");
 
       const contacts = await fetchDirectMessageContacts(effectiveUserId || "");
-      console.error("[ChatX Debug] contacts returned:", contacts?.length);
       if (contacts && contacts.length > 0) {
         setDirectMessages(contacts.map((p) => ({ id: p.id, name: p.name, status: p.status, role: p.role })));
+      }
+
+      if (preferredChat) {
+        setSelectedChat(preferredChat);
+        if (activeDM) localStorage.removeItem("chatx_active_dm");
+      } else if (channelData && channelData.length > 0) {
+        setSelectedChat(channelData[0].name);
       }
     } catch (err) {
       console.error("[ChatX Debug] Error loading channels and contacts:", err);
@@ -493,6 +538,84 @@ export default function DashboardPage() {
     }
   };
 
+  const handleConfirmLockState = (pin: string, lock: boolean) => {
+    const updated = { ...lockedChats };
+    if (lock) {
+      updated[selectedChat] = pin;
+      setUnlockedChats((prev) => (prev.includes(selectedChat) ? prev : [...prev, selectedChat]));
+    } else {
+      delete updated[selectedChat];
+      setUnlockedChats((prev) => prev.filter((c) => c !== selectedChat));
+    }
+    setLockedChats(updated);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("chatx_locked_chats", JSON.stringify(updated));
+    }
+  };
+
+  const handleUnlockGateSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPinError(null);
+    const expectedPin = lockedChats[selectedChat];
+    if (enteredPin === expectedPin) {
+      setUnlockedChats((prev) => (prev.includes(selectedChat) ? prev : [...prev, selectedChat]));
+      setEnteredPin("");
+      setPinError(null);
+    } else {
+      setPinError("Incorrect security PIN code. Please try again.");
+    }
+  };
+
+  const handleArchiveCurrentChat = () => {
+    const updated = archivedChats.includes(selectedChat) ? archivedChats : [...archivedChats, selectedChat];
+    setArchivedChats(updated);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("chatx_archived_chats", JSON.stringify(updated));
+    }
+    const remainingChannels = channels.filter((c) => !updated.includes(c.name));
+    if (remainingChannels.length > 0) {
+      setSelectedChat(remainingChannels[0].name);
+    }
+  };
+
+  const handleUnarchiveChat = (chatName: string) => {
+    const updated = archivedChats.filter((c) => c !== chatName);
+    setArchivedChats(updated);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("chatx_archived_chats", JSON.stringify(updated));
+    }
+  };
+
+  const handleCreatePoll = async (pollData: { question: string; options: string[]; isMultipleChoice: boolean; isAnonymous: boolean }) => {
+    const activeUserId = user?.id || profile?.id || (typeof window !== "undefined" ? JSON.parse(localStorage.getItem("chatx_active_user") || "{}")?.id : "");
+    if (!activeUserId) return;
+
+    const targetConvId = await resolveActiveConversationId();
+    if (!targetConvId) return;
+
+    const pollPayload = {
+      type: "poll",
+      id: `poll_${Date.now()}`,
+      question: pollData.question,
+      options: pollData.options.map((opt, idx) => ({
+        id: `opt_${idx}`,
+        text: opt,
+        voters: []
+      })),
+      isMultipleChoice: pollData.isMultipleChoice,
+      isAnonymous: pollData.isAnonymous,
+      creatorId: activeUserId,
+      creatorName: profile?.fullName || user?.email || "User",
+      createdAt: new Date().toISOString()
+    };
+
+    await sendMessage({
+      conversationId: targetConvId,
+      content: `POLL_DATA:${JSON.stringify(pollPayload)}`,
+      type: "text"
+    }, activeUserId);
+  };
+
   const handleTogglePin = async (messageId: string, isPinned: boolean) => {
     setMessagesByChannel((prev) => {
       const list = prev[selectedChat] || [];
@@ -639,60 +762,6 @@ export default function DashboardPage() {
     const created = await createChannel(newChannel.name, newChannel.topic, newChannel.type, newChannel.isPrivate);
     setChannels((prev) => [...prev, created]);
     setSelectedChat(created.name);
-  };
-
-  const handleCreatePoll = async (poll: { question: string; options: string[]; isMultipleChoice: boolean; isAnonymous: boolean }) => {
-    const senderUserId = user?.id || profile?.id;
-    if (!senderUserId) return;
-
-    const activeConvId = await resolveActiveConversationId();
-    if (!activeConvId) return;
-
-    const pollContent = `📊 POLL: ${poll.question}\nOptions: ${poll.options.join(" | ")}`;
-    const pollMsg: Message = {
-      id: Date.now().toString(),
-      conversationId: activeConvId,
-      senderId: senderUserId,
-      content: pollContent,
-      type: "poll",
-      isEdited: false,
-      isPinned: true,
-      isLocked: false,
-      status: "sent",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      sender: {
-        id: senderUserId,
-        email: user?.email || profile?.email || "",
-        username: profile?.username || "",
-        fullName: profile?.fullName || user?.email || "User",
-        status: profile?.status || "online",
-        lastSeen: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    };
-
-    setMessagesByChannel((prev) => ({
-      ...prev,
-      [selectedChat]: [...(prev[selectedChat] || []), pollMsg],
-    }));
-
-    try {
-      await sendMessage({ conversationId: activeConvId, content: pollContent, type: "poll" }, senderUserId);
-      const fetchedMsgs = await fetchMessages(activeConvId);
-      if (fetchedMsgs && fetchedMsgs.length > 0) {
-        setMessagesByChannel((prev) => ({ ...prev, [selectedChat]: fetchedMsgs }));
-      }
-    } catch (err) {
-      console.warn("Poll send error:", err);
-    }
-  };
-
-  const handleConfirmLockState = (pin: string, lock: boolean) => {
-    setChannels((prev) =>
-      prev.map((c) => (c.name === selectedChat ? { ...c, locked: lock } : c))
-    );
   };
 
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -1173,6 +1242,14 @@ export default function DashboardPage() {
               <HardDrive className="w-5 h-5" />
             </Link>
 
+            <Link
+              href="/archive"
+              title="Archived Conversations"
+              className="p-2.5 rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground transition-all"
+            >
+              <Archive className="w-5 h-5" />
+            </Link>
+
             <button
               onClick={() => setIsAIDrawerOpen(!isAIDrawerOpen)}
               title="AI Assistant"
@@ -1262,22 +1339,27 @@ export default function DashboardPage() {
               </button>
             </div>
             <div className="space-y-1">
-              {channels.map((ch) => (
-                <button
-                  key={ch.name}
-                  onClick={() => setSelectedChat(ch.name)}
-                  className={`w-full flex items-center justify-between px-2.5 py-2 rounded-md text-xs font-medium transition-all ${
-                    selectedChat === ch.name
-                      ? "bg-accent text-accent-foreground font-semibold"
-                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 truncate">
-                    {ch.locked ? <Lock className="w-3.5 h-3.5 text-warning" /> : <Hash className="w-3.5 h-3.5" />}
-                    <span className="truncate">{ch.name}</span>
-                  </div>
-                </button>
-              ))}
+              {channels
+                .filter((ch) => !archivedChats.includes(ch.name))
+                .map((ch) => {
+                  const isLocked = !!lockedChats[ch.name] || ch.locked;
+                  return (
+                    <button
+                      key={ch.name}
+                      onClick={() => setSelectedChat(ch.name)}
+                      className={`w-full flex items-center justify-between px-2.5 py-2 rounded-md text-xs font-medium transition-all ${
+                        selectedChat === ch.name
+                          ? "bg-accent text-accent-foreground font-semibold"
+                          : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        {isLocked ? <Lock className="w-3.5 h-3.5 text-amber-500" /> : <Hash className="w-3.5 h-3.5" />}
+                        <span className="truncate">{ch.name}</span>
+                      </div>
+                    </button>
+                  );
+                })}
             </div>
           </div>
 
@@ -1293,43 +1375,97 @@ export default function DashboardPage() {
               </Link>
             </div>
             <div className="space-y-1">
-              {directMessages.map((dm) => (
-                <button
-                  key={dm.name}
-                  onClick={() => setSelectedChat(dm.name)}
-                  className={`w-full flex items-center justify-between px-2.5 py-2 rounded-md text-xs font-medium transition-all ${
-                    selectedChat === dm.name
-                      ? "bg-accent text-accent-foreground font-semibold"
-                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 truncate">
-                    <div className="relative">
-                      <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-xs">
-                        {dm.name.charAt(0)}
+              {directMessages
+                .filter((dm) => !archivedChats.includes(dm.name))
+                .map((dm) => {
+                  const isLocked = !!lockedChats[dm.name];
+                  return (
+                    <button
+                      key={dm.name}
+                      onClick={() => setSelectedChat(dm.name)}
+                      className={`w-full flex items-center justify-between px-2.5 py-2 rounded-md text-xs font-medium transition-all ${
+                        selectedChat === dm.name
+                          ? "bg-accent text-accent-foreground font-semibold"
+                          : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 truncate">
+                        <div className="relative">
+                          <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-xs">
+                            {dm.name.charAt(0)}
+                          </div>
+                          <span
+                            className={`absolute bottom-0 right-0 w-2 h-2 rounded-full border border-card ${
+                              dm.status === "online"
+                                ? "bg-emerald-500"
+                                : dm.status === "away"
+                                ? "bg-amber-500"
+                                : dm.status === "dnd"
+                                ? "bg-rose-500"
+                                : "bg-slate-400"
+                            }`}
+                            title={dm.status || "offline"}
+                          />
+                        </div>
+                        <div className="flex flex-col text-left truncate">
+                          <div className="flex items-center gap-1">
+                            <span className="truncate font-medium text-foreground">{dm.name}</span>
+                            {isLocked && <Lock className="w-2.5 h-2.5 text-amber-500 shrink-0" />}
+                          </div>
+                          <span className="text-[10px] text-muted-foreground capitalize">{dm.status || "offline"} • {dm.role}</span>
+                        </div>
                       </div>
-                      <span
-                        className={`absolute bottom-0 right-0 w-2 h-2 rounded-full border border-card ${
-                          dm.status === "online"
-                            ? "bg-emerald-500"
-                            : dm.status === "away"
-                            ? "bg-amber-500"
-                            : dm.status === "dnd"
-                            ? "bg-rose-500"
-                            : "bg-slate-400"
-                        }`}
-                        title={dm.status || "offline"}
-                      />
-                    </div>
-                    <div className="flex flex-col text-left truncate">
-                      <span className="truncate font-medium text-foreground">{dm.name}</span>
-                      <span className="text-[10px] text-muted-foreground capitalize">{dm.status || "offline"} • {dm.role}</span>
-                    </div>
-                  </div>
-                </button>
-              ))}
+                    </button>
+                  );
+                })}
             </div>
           </div>
+
+          {/* Active Archived Conversation Banner in Sidebar */}
+          {archivedChats.includes(selectedChat) && (
+            <div className="pt-2 border-t border-amber-500/20">
+              <div className="px-2 mb-1.5 text-[10px] font-bold text-amber-500 uppercase tracking-wider flex items-center justify-between">
+                <span>Active (Archived)</span>
+                <span className="bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded text-[9px] font-semibold">Archived</span>
+              </div>
+              <div className="w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                <div className="flex items-center gap-2 truncate">
+                  <Archive className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  <span className="truncate">{selectedChat}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleUnarchiveChat(selectedChat);
+                  }}
+                  className="text-[10px] bg-amber-500 text-black px-2 py-0.5 rounded font-bold hover:opacity-90 transition-all shrink-0 ml-2"
+                  title="Restore to active chats"
+                >
+                  Restore
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Archived Conversations Shortcut */}
+          {archivedChats.length > 0 && (
+            <div className="pt-2 border-t border-border/40">
+              <Link
+                href="/archive"
+                className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:bg-secondary hover:text-foreground transition-all group"
+                title="View and restore archived chats"
+              >
+                <div className="flex items-center gap-2">
+                  <Archive className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors" />
+                  <span>Archived Chats Library</span>
+                </div>
+                <span className="text-[10px] font-bold bg-secondary px-2 py-0.5 rounded-full border border-border">
+                  {archivedChats.length}
+                </span>
+              </Link>
+            </div>
+          )}
         </div>
 
         {user ? (
@@ -1384,17 +1520,22 @@ export default function DashboardPage() {
       <main className="flex-1 flex flex-col bg-background relative overflow-hidden">
         <header className="h-14 border-b border-border px-6 flex items-center justify-between bg-card/30">
           <div className="flex items-center gap-3">
-            {currentChannelInfo?.locked ? (
-              <Lock className="w-5 h-5 text-warning" />
+            {lockedChats[selectedChat] ? (
+              <Lock className="w-5 h-5 text-amber-500" />
             ) : (
               <Hash className="w-5 h-5 text-primary" />
             )}
             <div>
               <h1 className="font-semibold text-sm tracking-tight text-foreground flex items-center gap-2">
                 <span>{selectedChat}</span>
-                {currentChannelInfo?.locked && (
-                  <span className="text-[10px] bg-warning/10 text-warning px-2 py-0.5 rounded border border-warning/20 font-medium">
-                    PIN Protected
+                {lockedChats[selectedChat] && (
+                  <span className="text-[10px] bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded border border-amber-500/20 font-medium flex items-center gap-1">
+                    <Lock className="w-2.5 h-2.5" /> PIN Protected
+                  </span>
+                )}
+                {archivedChats.includes(selectedChat) && (
+                  <span className="text-[10px] bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30 font-medium flex items-center gap-1">
+                    <Archive className="w-2.5 h-2.5 text-amber-500" /> Archived
                   </span>
                 )}
               </h1>
@@ -1407,30 +1548,49 @@ export default function DashboardPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setIsLockOpen(true)}
-              className="p-2 text-muted-foreground hover:bg-secondary rounded-md"
-              title={currentChannelInfo?.locked ? "Unlock Channel" : "Lock Channel with PIN"}
+              className="p-2 text-muted-foreground hover:bg-secondary rounded-md transition-all"
+              title={lockedChats[selectedChat] ? "Manage PIN Lock" : "Lock Conversation with PIN"}
             >
-              {currentChannelInfo?.locked ? (
-                <Lock className="w-4 h-4 text-warning" />
+              {lockedChats[selectedChat] ? (
+                <Lock className="w-4 h-4 text-amber-500" />
               ) : (
                 <Unlock className="w-4 h-4" />
               )}
             </button>
             <button
               onClick={() => setIsPollOpen(true)}
-              className="p-2 text-muted-foreground hover:bg-secondary rounded-md"
+              className="p-2 text-muted-foreground hover:bg-secondary rounded-md transition-all"
               title="Create Channel Poll"
             >
               <BarChart2 className="w-4 h-4 text-primary" />
             </button>
+            {archivedChats.includes(selectedChat) ? (
+              <button
+                type="button"
+                onClick={() => handleUnarchiveChat(selectedChat)}
+                className="flex items-center gap-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2.5 py-1.5 rounded-md text-xs font-semibold transition-all"
+                title="Unarchive Conversation"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-amber-500" />
+                <span>Unarchive</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleArchiveCurrentChat}
+                className="p-2 text-muted-foreground hover:bg-secondary rounded-md transition-all"
+                title="Archive Conversation"
+              >
+                <Archive className="w-4 h-4 text-muted-foreground" />
+              </button>
+            )}
             <button
-              onClick={() => {
-                alert(`Archived channel #${selectedChat}`);
-              }}
-              className="p-2 text-muted-foreground hover:bg-secondary rounded-md"
-              title="Archive Conversation"
+              onClick={() => setIsScheduleChatOpen(true)}
+              className="flex items-center gap-1.5 bg-secondary text-foreground hover:bg-secondary/80 border border-border text-xs px-3 py-1.5 rounded-md font-medium transition-all"
+              title={`Schedule meeting for ${selectedChat}`}
             >
-              <Archive className="w-4 h-4 text-muted-foreground" />
+              <Calendar className="w-3.5 h-3.5 text-primary" />
+              <span>Schedule</span>
             </button>
             <button
               onClick={() => setIsMeetingActive(true)}
@@ -1442,110 +1602,176 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        {/* Dynamic Chat Messages Feed with Reverse Infinite Scroll */}
-        <div
-          ref={messagesContainerRef}
-          onScroll={handleScroll}
-          className="flex-1 overflow-y-auto p-6 space-y-6"
-        >
-          {isLoadingOlder && (
-            <div className="flex justify-center py-2 animate-in fade-in">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground bg-secondary/80 px-3 py-1.5 rounded-full border border-border">
-                <div className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                <span>Loading earlier messages...</span>
-              </div>
+        {/* Check if active conversation is PIN protected and locked in current session */}
+        {lockedChats[selectedChat] && !unlockedChats.includes(selectedChat) ? (
+          /* PIN Security Unlock Gate Screen */
+          <div className="flex-1 flex flex-col items-center justify-center p-8 bg-card/20 text-center space-y-5 animate-in fade-in duration-200">
+            <div className="p-4 rounded-2xl bg-amber-500/10 text-amber-500 border border-amber-500/30 shadow-lg">
+              <Lock className="w-10 h-10" />
             </div>
-          )}
-
-          <div className="bg-card p-4 rounded-xl border border-border shadow-sm flex items-start gap-4">
-            <div className="p-2.5 bg-primary/10 rounded-lg text-primary">
-              <Sparkles className="w-5 h-5" />
-            </div>
-            <div className="space-y-1">
-              <h3 className="text-xs font-semibold text-foreground">Supabase Realtime & Auth Integration Active</h3>
+            <div className="space-y-1.5 max-w-sm">
+              <h3 className="font-bold text-base text-foreground tracking-tight">PIN-Protected Conversation</h3>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Supabase backend service layer configured with SSR auth helpers, real-time message streams, presence tracking, and RLS multi-tenant policies.
+                Access to <span className="font-semibold text-foreground">#{selectedChat}</span> is restricted. Enter your 4-digit security PIN to unlock this conversation.
               </p>
             </div>
-          </div>
 
-          {currentMessages.map((msg) => (
-            <MessageItem
-              key={msg.id}
-              message={msg}
-              isSelf={msg.senderId === user?.id || msg.sender?.fullName === "You"}
-              onReplyToThread={(m) => setActiveThreadMessage(m)}
-              reactions={messageReactions[msg.id] || []}
-              onToggleReaction={handleToggleReaction}
-              currentUserId={user?.id || profile?.id}
-              onEditMessage={handleEditMessage}
-              onDeleteMessage={handleDeleteMessage}
-              onTogglePin={handleTogglePin}
-              onToggleSave={handleToggleSave}
-              isSaved={savedMessageIds.has(msg.id)}
-            />
-          ))}
-          <TypingIndicator />
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Message Input Box */}
-        <form onSubmit={handleSendMessage} className="p-4 border-t border-border bg-card/30">
-          <div className="bg-card border border-input rounded-lg p-2 focus-within:ring-1 focus-within:ring-ring transition-all">
-            {showEmojiPicker && (
-              <div className="flex items-center gap-1.5 p-2 bg-secondary rounded-lg border border-border text-xs mb-2 animate-in fade-in duration-150">
-                {["👍", "🚀", "🔥", "❤️", "🎉", "💯", "✅", "🙌"].map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    onClick={() => {
-                      handleMessageInputChange(messageInput + emoji);
-                      setShowEmojiPicker(false);
-                    }}
-                    className="p-1 hover:bg-accent rounded text-base transition-transform hover:scale-125"
-                  >
-                    {emoji}
-                  </button>
-                ))}
+            {pinError && (
+              <div className="p-2.5 px-4 bg-destructive/10 border border-destructive/30 rounded-xl text-destructive text-xs font-semibold animate-in shake">
+                {pinError}
               </div>
             )}
 
-            <textarea
-              rows={2}
-              value={messageInput}
-              onChange={(e) => handleMessageInputChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSendMessage(e);
-                }
-              }}
-              placeholder={isRecordingVoice ? "🎙️ Recording audio message..." : `Message #${selectedChat}... (Press Enter to send)`}
-              className="w-full bg-transparent text-xs text-foreground placeholder:text-muted-foreground focus:outline-none resize-none"
-            />
-            <div className="flex items-center justify-between border-t border-border/50 pt-2 mt-1">
-              <div className="flex items-center gap-1.5 text-muted-foreground">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-                <button type="button" onClick={() => setIsPollOpen(true)} className="p-1 hover:bg-secondary rounded text-muted-foreground" title="Create Poll"><BarChart2 className="w-4 h-4" /></button>
-                <button type="button" onClick={() => fileInputRef.current?.click()} className="p-1 hover:bg-secondary rounded text-muted-foreground" title="Attach File"><Paperclip className="w-4 h-4" /></button>
-                <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="p-1 hover:bg-secondary rounded text-muted-foreground" title="Add Quick Emoji"><Smile className="w-4 h-4" /></button>
-                <button type="button" onClick={handleVoiceRecord} className={`p-1 rounded transition-all ${isRecordingVoice ? "bg-destructive text-white animate-pulse" : "hover:bg-secondary text-muted-foreground"}`} title="Record Voice Note"><Mic className="w-4 h-4" /></button>
-              </div>
+            <form onSubmit={handleUnlockGateSubmit} className="space-y-3 w-full max-w-xs">
+              <input
+                type="password"
+                maxLength={6}
+                autoFocus
+                required
+                value={enteredPin}
+                onChange={(e) => setEnteredPin(e.target.value)}
+                placeholder="••••"
+                className="w-full text-center tracking-widest text-2xl bg-secondary border border-input text-foreground rounded-xl py-3 focus:outline-none focus:ring-2 focus:ring-primary font-mono shadow-inner"
+              />
               <button
                 type="submit"
-                disabled={!messageInput.trim()}
-                className="bg-primary text-primary-foreground p-1.5 rounded-md hover:opacity-90 transition-all disabled:opacity-50"
+                className="w-full py-2.5 bg-primary text-primary-foreground font-bold rounded-xl hover:opacity-90 transition-all shadow-md text-xs"
               >
-                <Send className="w-3.5 h-3.5" />
+                Unlock Conversation
               </button>
-            </div>
+            </form>
           </div>
-        </form>
+        ) : (
+          <>
+            {/* Dynamic Chat Messages Feed with Reverse Infinite Scroll */}
+            <div
+              ref={messagesContainerRef}
+              onScroll={handleScroll}
+              className="flex-1 overflow-y-auto p-6 space-y-6"
+            >
+              {isLoadingOlder && (
+                <div className="flex justify-center py-2 animate-in fade-in">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground bg-secondary/80 px-3 py-1.5 rounded-full border border-border">
+                    <div className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    <span>Loading earlier messages...</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Archived Conversation Banner Notice */}
+              {archivedChats.includes(selectedChat) && (
+                <div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-xl flex items-center justify-between text-xs text-amber-400 animate-in fade-in">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-amber-500/20 rounded-lg text-amber-500">
+                      <Archive className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-amber-300">Archived Conversation</h4>
+                      <p className="text-[11px] text-muted-foreground">This chat is archived. You can read previous messages or unarchive it to restore it to your sidebar.</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleUnarchiveChat(selectedChat)}
+                    className="flex items-center gap-1.5 bg-amber-500 text-black px-3 py-1.5 rounded-lg font-bold text-xs hover:opacity-90 transition-all shrink-0 ml-3 shadow-sm"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Unarchive</span>
+                  </button>
+                </div>
+              )}
+
+              <div className="bg-card p-4 rounded-xl border border-border shadow-sm flex items-start gap-4">
+                <div className="p-2.5 bg-primary/10 rounded-lg text-primary">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-xs font-semibold text-foreground">Supabase Realtime & Auth Integration Active</h3>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Supabase backend service layer configured with SSR auth helpers, real-time message streams, presence tracking, and RLS multi-tenant policies.
+                  </p>
+                </div>
+              </div>
+
+              {currentMessages.map((msg) => (
+                <MessageItem
+                  key={msg.id}
+                  message={msg}
+                  isSelf={msg.senderId === user?.id || msg.sender?.fullName === "You"}
+                  onReplyToThread={(m) => setActiveThreadMessage(m)}
+                  reactions={messageReactions[msg.id] || []}
+                  onToggleReaction={handleToggleReaction}
+                  currentUserId={user?.id || profile?.id}
+                  onEditMessage={handleEditMessage}
+                  onDeleteMessage={handleDeleteMessage}
+                  onTogglePin={handleTogglePin}
+                  onToggleSave={handleToggleSave}
+                  isSaved={savedMessageIds.has(msg.id)}
+                />
+              ))}
+              <TypingIndicator />
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Message Input Box */}
+            <form onSubmit={handleSendMessage} className="p-4 border-t border-border bg-card/30">
+              <div className="bg-card border border-input rounded-lg p-2 focus-within:ring-1 focus-within:ring-ring transition-all">
+                {showEmojiPicker && (
+                  <div className="flex items-center gap-1.5 p-2 bg-secondary rounded-lg border border-border text-xs mb-2 animate-in fade-in duration-150">
+                    {["👍", "🚀", "🔥", "❤️", "🎉", "💯", "✅", "🙌"].map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => {
+                          handleMessageInputChange(messageInput + emoji);
+                          setShowEmojiPicker(false);
+                        }}
+                        className="p-1 hover:bg-accent rounded text-base transition-transform hover:scale-125"
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <textarea
+                  rows={2}
+                  value={messageInput}
+                  onChange={(e) => handleMessageInputChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage(e);
+                    }
+                  }}
+                  placeholder={isRecordingVoice ? "🎙️ Recording audio message..." : `Message #${selectedChat}... (Press Enter to send)`}
+                  className="w-full bg-transparent text-xs text-foreground placeholder:text-muted-foreground focus:outline-none resize-none"
+                />
+                <div className="flex items-center justify-between border-t border-border/50 pt-2 mt-1">
+                  <div className="flex items-center gap-1.5 text-muted-foreground">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                    <button type="button" onClick={() => setIsPollOpen(true)} className="p-1 hover:bg-secondary rounded text-muted-foreground" title="Create Poll"><BarChart2 className="w-4 h-4" /></button>
+                    <button type="button" onClick={() => fileInputRef.current?.click()} className="p-1 hover:bg-secondary rounded text-muted-foreground" title="Attach File"><Paperclip className="w-4 h-4" /></button>
+                    <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="p-1 hover:bg-secondary rounded text-muted-foreground" title="Add Quick Emoji"><Smile className="w-4 h-4" /></button>
+                    <button type="button" onClick={handleVoiceRecord} className={`p-1 rounded transition-all ${isRecordingVoice ? "bg-destructive text-white animate-pulse" : "hover:bg-secondary text-muted-foreground"}`} title="Record Voice Note"><Mic className="w-4 h-4" /></button>
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={!messageInput.trim()}
+                    className="bg-primary text-primary-foreground p-1.5 rounded-md hover:opacity-90 transition-all disabled:opacity-50"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </form>
+          </>
+        )}
       </main>
 
       {/* Slide-Out Thread Drawer when replying to a message */}
@@ -1723,6 +1949,55 @@ export default function DashboardPage() {
           </div>
         </aside>
       )}
+
+      {/* Security Lock Dialog */}
+      <LockDialog
+        isOpen={isLockOpen}
+        conversationTitle={selectedChat}
+        isCurrentlyLocked={!!lockedChats[selectedChat]}
+        onClose={() => setIsLockOpen(false)}
+        onConfirmLockState={handleConfirmLockState}
+      />
+
+      {/* Channel Poll Dialog */}
+      <PollDialog
+        isOpen={isPollOpen}
+        onClose={() => setIsPollOpen(false)}
+        onCreatePoll={handleCreatePoll}
+      />
+
+      {/* Create Channel Dialog */}
+      <ChannelDialog
+        isOpen={isCreateChannelOpen}
+        onClose={() => setIsCreateChannelOpen(false)}
+        onCreateChannel={handleCreateChannel}
+      />
+
+      {/* User Profile Dialog */}
+      <ProfileDialog
+        isOpen={isProfileOpen}
+        onClose={() => setIsProfileOpen(false)}
+      />
+
+      {/* Schedule Meeting for Active Conversation */}
+      <ScheduleChatMeetingDialog
+        isOpen={isScheduleChatOpen}
+        onClose={() => setIsScheduleChatOpen(false)}
+        targetChat={selectedChat}
+        isDM={!channels.some((c) => c.name === selectedChat) && directMessages.some((dm) => dm.name === selectedChat)}
+        dmContact={directMessages.find((dm) => dm.name === selectedChat)}
+        channelInfo={channels.find((c) => c.name === selectedChat)}
+        currentUserId={user?.id || profile?.id || ""}
+        currentUserName={profile?.fullName || user?.email || "User"}
+      />
+
+      {/* Authentication Dialog */}
+      <AuthDialog
+        isOpen={isAuthOpen}
+        defaultMode={authMode}
+        onClose={() => setIsAuthOpen(false)}
+        onSuccessLogin={handleEnterWorkspace}
+      />
     </div>
   );
 }

@@ -123,3 +123,20 @@ CREATE POLICY "Allow delete on message_reactions" ON public.message_reactions FO
 ALTER PUBLICATION supabase_realtime ADD TABLE public.message_reactions;
 ALTER TABLE public.message_reactions REPLICA IDENTITY FULL;
 
+-- 10. Meetings & Meeting Participants RLS & Realtime
+ALTER TABLE public.meetings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow insert on meetings for all" ON public.meetings FOR INSERT TO public WITH CHECK (true);
+CREATE POLICY "Allow update on meetings for all" ON public.meetings FOR UPDATE TO public USING (true);
+CREATE POLICY "Allow delete on meetings for all" ON public.meetings FOR DELETE TO public USING (true);
+ALTER PUBLICATION supabase_realtime ADD TABLE public.meetings;
+ALTER TABLE public.meetings REPLICA IDENTITY FULL;
+
+ALTER TABLE public.meeting_participants ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow select on meeting_participants" ON public.meeting_participants FOR SELECT TO public USING (true);
+CREATE POLICY "Allow insert on meeting_participants" ON public.meeting_participants FOR INSERT TO public WITH CHECK (true);
+CREATE POLICY "Allow delete on meeting_participants" ON public.meeting_participants FOR DELETE TO public USING (true);
+CREATE POLICY "Allow update on meeting_participants" ON public.meeting_participants FOR UPDATE TO public USING (true);
+ALTER PUBLICATION supabase_realtime ADD TABLE public.meeting_participants;
+ALTER TABLE public.meeting_participants REPLICA IDENTITY FULL;
+
+
