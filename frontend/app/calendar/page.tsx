@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
 import {
@@ -30,7 +30,13 @@ import {
   Search,
   CheckSquare,
   Square,
-  MessageSquare
+  MessageSquare,
+  ChevronLeft,
+  ChevronRight,
+  CalendarDays,
+  LayoutGrid,
+  List,
+  CalendarRange
 } from "lucide-react";
 import { 
   fetchMeetings, 
@@ -42,6 +48,8 @@ import {
 } from "@/services/meetings";
 import { fetchChannels, fetchDirectMessageContacts, ChannelItem, UserDirectoryItem } from "@/services/channels";
 import { sendMessage } from "@/services/messages";
+
+type CalendarViewMode = "day" | "month" | "week" | "list";
 
 export default function CalendarPage() {
   const router = useRouter();
@@ -55,6 +63,15 @@ export default function CalendarPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [broadcastingId, setBroadcastingId] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  // View Mode & Selected Date State
+  const [viewMode, setViewMode] = useState<CalendarViewMode>("day");
+  const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Schedule Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -305,6 +322,120 @@ export default function CalendarPage() {
     );
   };
 
+  // Quick Open Modal with pre-filled Hour Slot
+  const handleSlotClick = (hour: number) => {
+    const dateStr = selectedDate.toISOString().split("T")[0];
+    const timeStr = `${hour.toString().padStart(2, "0")}:00`;
+    setScheduledDate(dateStr);
+    setScheduledTime(timeStr);
+    setTitle(`${formatHourLabel(hour)} Team Sync`);
+    setIsModalOpen(true);
+  };
+
+  // Date Navigation Helpers
+  const goToPreviousDay = () => {
+    const prev = new Date(selectedDate);
+    prev.setDate(prev.getDate() - 1);
+    setSelectedDate(prev);
+  };
+
+  const goToNextDay = () => {
+    const next = new Date(selectedDate);
+    next.setDate(next.getDate() + 1);
+    setSelectedDate(next);
+  };
+
+  const goToToday = () => {
+    setSelectedDate(new Date());
+  };
+
+  const isSameDay = (d1: Date, d2: Date) => {
+    return (
+      d1.getFullYear() === d2.getFullYear() &&
+      d1.getMonth() === d2.getMonth() &&
+      d1.getDate() === d2.getDate()
+    );
+  };
+
+  const formatHourLabel = (hour: number) => {
+    const period = hour >= 12 ? "PM" : "AM";
+    const displayHour = hour % 12 === 0 ? 12 : hour % 12;
+    return `${displayHour.toString().padStart(2, "0")}:00 ${period}`;
+  };
+
+  // Filter meetings for the active day
+  const dayMeetings = useMemo(() => {
+    return meetings.filter((m) => {
+      if (!m.scheduledStart) return false;
+      const mDate = new Date(m.scheduledStart);
+      return isSameDay(mDate, selectedDate);
+    });
+  }, [meetings, selectedDate]);
+
+  // Group day meetings by 24 hours (0..23)
+  const hourlyMeetings = useMemo(() => {
+    const map: Record<number, MeetingItem[]> = {};
+    for (let h = 0; h < 24; h++) {
+      map[h] = [];
+    }
+    dayMeetings.forEach((m) => {
+      const h = new Date(m.scheduledStart).getHours();
+      if (map[h]) map[h].push(m);
+    });
+    return map;
+  }, [dayMeetings]);
+
+  // Month Grid Calculations
+  const monthData = useMemo(() => {
+    const year = selectedDate.getFullYear();
+    const month = selectedDate.getMonth();
+    const firstDayIndex = new Date(year, month, 1).getDay();
+    const totalDaysInMonth = new Date(year, month + 1, 0).getDate();
+    const days = [];
+
+    // Leading empty/prev month days
+    const prevMonthDaysCount = new Date(year, month, 0).getDate();
+    for (let i = firstDayIndex - 1; i >= 0; i--) {
+      days.push({
+        date: new Date(year, month - 1, prevMonthDaysCount - i),
+        isCurrentMonth: false
+      });
+    }
+
+    // Current month days
+    for (let i = 1; i <= totalDaysInMonth; i++) {
+      days.push({
+        date: new Date(year, month, i),
+        isCurrentMonth: true
+      });
+    }
+
+    // Trailing next month days to fill 5 or 6 rows (multiple of 7)
+    const remaining = (7 - (days.length % 7)) % 7;
+    for (let i = 1; i <= remaining; i++) {
+      days.push({
+        date: new Date(year, month + 1, i),
+        isCurrentMonth: false
+      });
+    }
+
+    return days;
+  }, [selectedDate]);
+
+  // Week Grid Calculations (7 days for the active week)
+  const weekDays = useMemo(() => {
+    const current = new Date(selectedDate);
+    const dayOfWeek = current.getDay(); // 0 = Sun
+    const startOfWeek = new Date(current);
+    startOfWeek.setDate(current.getDate() - dayOfWeek);
+
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(startOfWeek);
+      d.setDate(startOfWeek.getDate() + i);
+      return d;
+    });
+  }, [selectedDate]);
+
   // Filtered contacts and groups for Schedule Modal
   const filteredContacts = contacts.filter((c) => {
     const q = memberSearchQuery.toLowerCase();
@@ -335,15 +466,18 @@ export default function CalendarPage() {
     return c.name.toLowerCase().includes(q) || c.topic.toLowerCase().includes(q);
   });
 
+  const currentHourNow = new Date().getHours();
+  const isTodayActive = isSameDay(selectedDate, new Date());
+
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       {/* Top Navbar */}
       <header className="border-b border-border bg-card/60 backdrop-blur-md px-6 h-14 flex items-center justify-between sticky top-0 z-20">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => router.back()}
+            onClick={() => router.push("/")}
             className="p-2 rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-            title="Go Back"
+            title="Go Back to Workspace"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
@@ -358,17 +492,149 @@ export default function CalendarPage() {
           </div>
         </div>
 
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="bg-primary text-primary-foreground text-xs font-semibold px-4 py-2 rounded-xl hover:opacity-90 transition-all flex items-center gap-1.5 shadow-sm"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Schedule Meeting</span>
-        </button>
+        {/* View Mode Toggle & Schedule Button */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center bg-secondary/80 p-1 rounded-xl border border-border text-xs">
+            <button
+              onClick={() => setViewMode("day")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                viewMode === "day"
+                  ? "bg-primary text-primary-foreground shadow-xs"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              title="24-Hour Hourly Timeline View"
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>Day (24h)</span>
+            </button>
+
+            <button
+              onClick={() => setViewMode("month")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                viewMode === "month"
+                  ? "bg-primary text-primary-foreground shadow-xs"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              title="Monthly Calendar Grid"
+            >
+              <CalendarDays className="w-3.5 h-3.5" />
+              <span>Month</span>
+            </button>
+
+            <button
+              onClick={() => setViewMode("week")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                viewMode === "week"
+                  ? "bg-primary text-primary-foreground shadow-xs"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              title="7-Day Weekly Grid"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>Week</span>
+            </button>
+
+            <button
+              onClick={() => setViewMode("list")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                viewMode === "list"
+                  ? "bg-primary text-primary-foreground shadow-xs"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              title="Full Agenda List"
+            >
+              <List className="w-3.5 h-3.5" />
+              <span>List</span>
+            </button>
+          </div>
+
+          <button
+            onClick={() => {
+              const now = new Date();
+              setScheduledDate(selectedDate.toISOString().split("T")[0]);
+              setScheduledTime(`${(now.getHours() + 1).toString().padStart(2, "0")}:00`);
+              setIsModalOpen(true);
+            }}
+            className="bg-primary text-primary-foreground text-xs font-semibold px-4 py-2 rounded-xl hover:opacity-90 transition-all flex items-center gap-1.5 shadow-sm"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Schedule Meeting</span>
+          </button>
+        </div>
       </header>
 
+      {/* Date Navigation & Stepper Toolbar (for Day, Month, and Week views) */}
+      <div className="bg-card/40 border-b border-border/80 px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={goToPreviousDay}
+            className="p-1.5 rounded-lg border border-border bg-secondary hover:bg-secondary/80 text-foreground transition-all"
+            title="Previous Day"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <button
+            onClick={goToNextDay}
+            className="p-1.5 rounded-lg border border-border bg-secondary hover:bg-secondary/80 text-foreground transition-all"
+            title="Next Day"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+          <button
+            onClick={goToToday}
+            className={`px-3 py-1 rounded-lg border text-xs font-semibold transition-all ${
+              isTodayActive
+                ? "bg-primary/20 text-primary border-primary/30"
+                : "bg-secondary text-muted-foreground border-border hover:text-foreground"
+            }`}
+          >
+            Today
+          </button>
+
+          <div className="h-4 w-px bg-border mx-1" />
+
+          {/* Formatted Date Title */}
+          <div className="flex items-center gap-2" suppressHydrationWarning>
+            <h2 className="font-bold text-sm text-foreground" suppressHydrationWarning>
+              {mounted
+                ? viewMode === "month"
+                  ? selectedDate.toLocaleDateString([], { month: "long", year: "numeric" })
+                  : selectedDate.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric", year: "numeric" })
+                : "Calendar View"}
+            </h2>
+            {isTodayActive && (
+              <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-500 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                Today
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Quick Date Picker / Stats */}
+        <div className="flex items-center gap-3 text-xs" suppressHydrationWarning>
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <CalendarRange className="w-3.5 h-3.5 text-primary" />
+            <span>
+              <strong className="text-foreground">{dayMeetings.length}</strong> {dayMeetings.length === 1 ? "meeting" : "meetings"} scheduled for this date
+            </span>
+          </div>
+
+          <input
+            type="date"
+            value={mounted ? selectedDate.toISOString().split("T")[0] : ""}
+            onChange={(e) => {
+              if (e.target.value) {
+                const [y, m, d] = e.target.value.split("-").map(Number);
+                setSelectedDate(new Date(y, m - 1, d));
+              }
+            }}
+            className="bg-secondary border border-input rounded-lg px-2.5 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+        </div>
+      </div>
+
       {/* Main Content Area */}
-      <div className="flex-1 max-w-4xl w-full mx-auto p-6 space-y-6">
+      <div className="flex-1 max-w-5xl w-full mx-auto p-6 space-y-6">
         {/* Success Alert */}
         {successMessage && (
           <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 text-xs flex items-center gap-2 animate-in fade-in">
@@ -403,195 +669,545 @@ export default function CalendarPage() {
               </div>
             ))}
           </div>
-        ) : meetings.length === 0 ? (
-          /* Empty State */
-          <div className="bg-card border border-border rounded-2xl p-12 text-center space-y-4 shadow-sm">
-            <div className="w-12 h-12 rounded-2xl bg-muted/30 border border-border flex items-center justify-center mx-auto text-muted-foreground">
-              <Inbox className="w-6 h-6" />
-            </div>
-            <div className="space-y-1">
-              <h3 className="font-bold text-sm text-foreground">No meetings scheduled</h3>
-              <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                Schedule a new video meeting session with your team members to collaborate on SFU stage.
-              </p>
-            </div>
-            <button
-              onClick={() => setIsModalOpen(true)}
-              className="bg-primary text-primary-foreground text-xs font-semibold px-4 py-2.5 rounded-xl hover:opacity-90 transition-all inline-flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Schedule First Meeting</span>
-            </button>
-          </div>
         ) : (
-          /* Meetings Roster */
-          <div className="space-y-4">
-            {meetings.map((m) => (
-              <div
-                key={m.id}
-                className="bg-card border border-border p-5 rounded-2xl space-y-4 hover:border-primary/40 transition-all shadow-sm group"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3.5">
-                    <div className="p-3 bg-primary/10 text-primary rounded-xl border border-primary/20 shrink-0">
-                      <Video className="w-5 h-5" />
-                    </div>
+          <>
+            {/* VIEW MODE 1: DAY 24-HOUR TIMELINE VIEW */}
+            {viewMode === "day" && (
+              <div className="space-y-3 animate-in fade-in duration-200">
+                {/* 24-Hour Timeline Grid Container */}
+                <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-sm divide-y divide-border/60">
+                  {Array.from({ length: 24 }, (_, hour) => {
+                    const meetingsAtHour = hourlyMeetings[hour] || [];
+                    const isCurrentHourSlot = isTodayActive && currentHourNow === hour;
 
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-bold text-sm text-foreground">{m.title}</h3>
-                        <span
-                          className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full border ${
-                            m.status === "active"
-                              ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 animate-pulse"
-                              : m.status === "scheduled"
-                              ? "bg-primary/10 text-primary border-primary/30"
-                              : "bg-muted text-muted-foreground border-border"
+                    return (
+                      <div
+                        key={hour}
+                        className={`flex items-start gap-4 p-3 transition-colors ${
+                          isCurrentHourSlot
+                            ? "bg-primary/5 border-l-4 border-l-primary"
+                            : "hover:bg-secondary/30"
+                        }`}
+                      >
+                        {/* Hour Label Column */}
+                        <div className="w-24 shrink-0 pt-1 flex flex-col items-start">
+                          <span className={`text-xs font-mono font-bold ${isCurrentHourSlot ? "text-primary" : "text-foreground/80"}`}>
+                            {formatHourLabel(hour)}
+                          </span>
+                          {isCurrentHourSlot && (
+                            <span className="text-[9px] font-extrabold uppercase bg-primary text-primary-foreground px-1.5 py-0.2 rounded mt-0.5">
+                              NOW
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Meetings or Empty Slot Column */}
+                        <div className="flex-1 space-y-2">
+                          {meetingsAtHour.length > 0 ? (
+                            meetingsAtHour.map((m) => (
+                              <div
+                                key={m.id}
+                                className="bg-secondary/70 hover:bg-secondary border border-border p-4 rounded-xl space-y-3 transition-all group"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                    <div className="p-2.5 bg-primary/20 text-primary rounded-xl border border-primary/30 shrink-0">
+                                      <Video className="w-4 h-4" />
+                                    </div>
+                                    <div>
+                                      <div className="flex items-center gap-2">
+                                        <h4 className="font-bold text-sm text-foreground">{m.title}</h4>
+                                        <span
+                                          className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full border ${
+                                            m.status === "active"
+                                              ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 animate-pulse"
+                                              : "bg-primary/10 text-primary border-primary/30"
+                                          }`}
+                                        >
+                                          {m.status === "active" ? "LIVE NOW" : "SCHEDULED"}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-0.5">
+                                        <span className="flex items-center gap-1 font-medium text-foreground/90">
+                                          <Clock className="w-3 h-3 text-primary" />
+                                          <span>{m.timeFormatted} ({m.durationFormatted})</span>
+                                        </span>
+                                        <span>•</span>
+                                        <span className="flex items-center gap-1">
+                                          <User className="w-3 h-3" />
+                                          <span>Host: {m.hostName}</span>
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Action Buttons */}
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      onClick={() => handlePostToChat(m)}
+                                      disabled={broadcastingId === m.id}
+                                      className="bg-card border border-border text-foreground hover:bg-secondary text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1 shadow-xs"
+                                      title="Post invite card to channel"
+                                    >
+                                      {broadcastingId === m.id ? (
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                      ) : (
+                                        <Send className="w-3 h-3 text-primary" />
+                                      )}
+                                      <span>Post</span>
+                                    </button>
+
+                                    <button
+                                      onClick={() => handleCopyLink(m.meetingCode)}
+                                      className="bg-card border border-border text-foreground hover:bg-secondary text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1 shadow-xs"
+                                      title="Copy meeting join link"
+                                    >
+                                      {copiedCode === m.meetingCode ? (
+                                        <Check className="w-3 h-3 text-emerald-500" />
+                                      ) : (
+                                        <Copy className="w-3 h-3 text-muted-foreground" />
+                                      )}
+                                      <span>{copiedCode === m.meetingCode ? "Copied" : "Link"}</span>
+                                    </button>
+
+                                    <button
+                                      onClick={() => handleJoinSession(m.meetingCode)}
+                                      className="bg-primary text-primary-foreground text-xs font-semibold px-3.5 py-1.5 rounded-lg hover:opacity-90 transition-all flex items-center gap-1.5 shadow-sm"
+                                    >
+                                      <Radio className="w-3 h-3" />
+                                      <span>Join Stage</span>
+                                    </button>
+
+                                    <button
+                                      onClick={() => handleDelete(m.id)}
+                                      className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-all"
+                                      title="Cancel meeting"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {m.description && (
+                                  <p className="text-[11px] text-muted-foreground leading-relaxed bg-card/60 p-2.5 rounded-lg border border-border/50">
+                                    {m.description}
+                                  </p>
+                                )}
+
+                                {/* Participants Row */}
+                                <div className="flex items-center justify-between text-[11px] pt-1 border-t border-border/40">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    {(m.invitedGroups || []).map((grp, idx) => (
+                                      <span
+                                        key={idx}
+                                        className="inline-flex items-center gap-1 bg-primary/10 text-primary border border-primary/20 text-[10px] font-medium px-2 py-0.5 rounded-full"
+                                      >
+                                        <Hash className="w-2.5 h-2.5" />
+                                        <span>{grp}</span>
+                                      </span>
+                                    ))}
+                                    {(m.participants || []).map((p) => (
+                                      <span
+                                        key={p.id}
+                                        className="inline-flex items-center gap-1 bg-card text-foreground border border-border text-[10px] font-medium px-2 py-0.5 rounded-full"
+                                      >
+                                        <span className="w-3.5 h-3.5 rounded-full bg-primary/20 text-primary text-[8px] flex items-center justify-center font-bold">
+                                          {p.name.charAt(0).toUpperCase()}
+                                        </span>
+                                        <span>{p.name}</span>
+                                      </span>
+                                    ))}
+                                  </div>
+
+                                  <button
+                                    onClick={() => handleOpenAddInvites(m)}
+                                    className="text-[11px] text-primary hover:underline font-semibold flex items-center gap-1"
+                                  >
+                                    <UserPlus className="w-3 h-3" />
+                                    <span>+ Add People</span>
+                                  </button>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            /* Empty Hour Slot with Quick Schedule on Click */
+                            <button
+                              type="button"
+                              onClick={() => handleSlotClick(hour)}
+                              className="w-full h-9 rounded-xl border border-dashed border-border/60 hover:border-primary/50 hover:bg-primary/5 flex items-center justify-between px-3 text-muted-foreground/60 hover:text-primary transition-all text-xs group"
+                            >
+                              <span className="text-[11px] group-hover:font-semibold">
+                                + Schedule meeting at {formatHourLabel(hour)}
+                              </span>
+                              <Plus className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* VIEW MODE 2: MONTHLY CALENDAR GRID VIEW */}
+            {viewMode === "month" && (
+              <div className="space-y-4 animate-in fade-in duration-200">
+                <div className="bg-card border border-border rounded-2xl p-5 shadow-sm space-y-4">
+                  {/* Days of Week Header */}
+                  <div className="grid grid-cols-7 text-center font-semibold text-xs text-muted-foreground border-b border-border pb-2.5">
+                    {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+                      <div key={day} className="uppercase tracking-wider text-[11px]">
+                        {day}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Days Cells Grid */}
+                  <div className="grid grid-cols-7 gap-2">
+                    {monthData.map(({ date, isCurrentMonth }, idx) => {
+                      const dayEvents = meetings.filter((m) => {
+                        if (!m.scheduledStart) return false;
+                        return isSameDay(new Date(m.scheduledStart), date);
+                      });
+
+                      const isSelected = isSameDay(date, selectedDate);
+                      const isToday = isSameDay(date, new Date());
+
+                      return (
+                        <div
+                          key={idx}
+                          onClick={() => {
+                            setSelectedDate(date);
+                            setViewMode("day");
+                          }}
+                          className={`min-h-[100px] p-2.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                            isSelected
+                              ? "bg-primary/10 border-primary shadow-sm"
+                              : isToday
+                              ? "bg-secondary/80 border-emerald-500/50"
+                              : isCurrentMonth
+                              ? "bg-secondary/40 border-border hover:border-primary/40 hover:bg-secondary/70"
+                              : "bg-card/30 border-border/30 opacity-40 hover:opacity-80"
                           }`}
                         >
-                          {m.status === "active" ? "LIVE NOW" : m.status}
-                        </span>
-                      </div>
+                          <div className="flex items-center justify-between">
+                            <span
+                              className={`text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center ${
+                                isToday
+                                  ? "bg-emerald-500 text-black font-extrabold"
+                                  : isSelected
+                                  ? "bg-primary text-primary-foreground"
+                                  : "text-foreground"
+                              }`}
+                            >
+                              {date.getDate()}
+                            </span>
+                            {dayEvents.length > 0 && (
+                              <span className="text-[9px] font-bold bg-primary text-primary-foreground px-1.5 py-0.2 rounded-full">
+                                {dayEvents.length}
+                              </span>
+                            )}
+                          </div>
 
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
-                        <span className="flex items-center gap-1 font-medium text-foreground/80">
-                          <Clock className="w-3.5 h-3.5 text-primary" />
-                          <span>{m.timeFormatted}</span>
-                        </span>
-                        <span>•</span>
-                        <span className="flex items-center gap-1">
-                          <User className="w-3.5 h-3.5" />
-                          <span>Host: {m.hostName}</span>
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+                          {/* Meeting Event Chips Preview */}
+                          <div className="space-y-1 my-1">
+                            {dayEvents.slice(0, 2).map((evt) => (
+                              <div
+                                key={evt.id}
+                                className="bg-primary/20 text-primary border border-primary/30 px-1.5 py-0.5 rounded text-[10px] font-semibold truncate"
+                                title={`${evt.title} (${evt.timeFormatted})`}
+                              >
+                                {evt.title}
+                              </div>
+                            ))}
+                            {dayEvents.length > 2 && (
+                              <span className="text-[9px] text-muted-foreground font-medium">
+                                +{dayEvents.length - 2} more
+                              </span>
+                            )}
+                          </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handlePostToChat(m)}
-                      disabled={broadcastingId === m.id}
-                      className="bg-secondary border border-border text-foreground hover:bg-secondary/80 text-xs font-semibold px-3 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-xs"
-                      title="Post announcement card to chat channel"
-                    >
-                      {broadcastingId === m.id ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Send className="w-3.5 h-3.5 text-primary" />
-                      )}
-                      <span>Post to Chat</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleCopyLink(m.meetingCode)}
-                      className="bg-secondary border border-border text-foreground hover:bg-secondary/80 text-xs font-semibold px-3 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-xs"
-                      title="Copy meeting join link"
-                    >
-                      {copiedCode === m.meetingCode ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-500" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5 text-muted-foreground" />
-                      )}
-                      <span>{copiedCode === m.meetingCode ? "Copied" : "Copy Link"}</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleJoinSession(m.meetingCode)}
-                      className="bg-primary text-primary-foreground text-xs font-semibold px-4 py-2 rounded-xl hover:opacity-90 transition-all flex items-center gap-1.5 shadow-sm"
-                    >
-                      <Radio className="w-3.5 h-3.5" />
-                      <span>Join Stage</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleDelete(m.id)}
-                      className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl transition-all"
-                      title="Delete meeting"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-
-                {m.description && (
-                  <p className="text-xs text-muted-foreground leading-relaxed bg-secondary/30 p-3 rounded-xl border border-border/40 font-normal">
-                    {m.description}
-                  </p>
-                )}
-
-                {/* Participants & Groups Row */}
-                <div className="bg-secondary/20 p-3 rounded-xl border border-border/50 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-foreground flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5 text-primary" />
-                      <span>Invited Participants & Groups</span>
-                    </span>
-                    <button
-                      onClick={() => handleOpenAddInvites(m)}
-                      className="text-[11px] text-primary hover:underline font-semibold flex items-center gap-1"
-                    >
-                      <UserPlus className="w-3 h-3" />
-                      <span>+ Add People / Groups</span>
-                    </button>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {/* Channel / Group badges */}
-                    {(m.invitedGroups && m.invitedGroups.length > 0 ? m.invitedGroups : []).map((grp, idx) => (
-                      <span
-                        key={idx}
-                        className="inline-flex items-center gap-1 bg-primary/10 text-primary border border-primary/20 text-[10px] font-medium px-2 py-0.5 rounded-full"
-                      >
-                        <Hash className="w-2.5 h-2.5" />
-                        <span>{grp}</span>
-                      </span>
-                    ))}
-
-                    {/* Member badges */}
-                    {m.participants && m.participants.length > 0 ? (
-                      m.participants.map((p) => (
-                        <span
-                          key={p.id}
-                          className="inline-flex items-center gap-1 bg-secondary text-foreground border border-border text-[10px] font-medium px-2 py-0.5 rounded-full"
-                        >
-                          <span className="w-3.5 h-3.5 rounded-full bg-primary/20 text-primary text-[8px] flex items-center justify-center font-bold">
-                            {p.name.charAt(0).toUpperCase()}
+                          <span className="text-[9px] text-muted-foreground hover:text-primary font-medium transition-colors">
+                            {dayEvents.length > 0 ? "View 24h schedule →" : "+ Schedule"}
                           </span>
-                          <span>{p.name}</span>
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-[10px] text-muted-foreground italic">
-                        {m.invitedGroups && m.invitedGroups.length > 0
-                          ? "Invited groups configured above"
-                          : "Private meeting (Invite specific members/groups below)"}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Session Flags Bar */}
-                <div className="flex items-center justify-between text-[11px] pt-1 text-muted-foreground border-t border-border/40">
-                  <div className="flex items-center gap-3">
-                    <span className="flex items-center gap-1 font-mono text-[10px] bg-secondary px-2 py-0.5 rounded border border-border">
-                      <LinkIcon className="w-3 h-3 text-primary" />
-                      <span>{m.meetingCode}</span>
-                    </span>
-                    {m.isWaitingRoom && (
-                      <span className="flex items-center gap-1 text-[10px]">
-                        <Shield className="w-3 h-3 text-emerald-500" /> Waiting Room Enabled
-                      </span>
-                    )}
-                    {m.isRecording && (
-                      <span className="flex items-center gap-1 text-[10px]">
-                        <Video className="w-3 h-3 text-amber-500" /> Auto Cloud Recording
-                      </span>
-                    )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
+            )}
+
+            {/* VIEW MODE 3: WEEKLY 7-DAY SCHEDULE GRID */}
+            {viewMode === "week" && (
+              <div className="bg-card border border-border rounded-2xl p-4 shadow-sm overflow-x-auto animate-in fade-in duration-200">
+                <div className="min-w-[700px] space-y-3">
+                  {/* Week Days Header Row */}
+                  <div className="grid grid-cols-7 gap-2 text-center border-b border-border pb-3">
+                    {weekDays.map((d, i) => {
+                      const isSelected = isSameDay(d, selectedDate);
+                      const isToday = isSameDay(d, new Date());
+                      const dayEventsCount = meetings.filter((m) => m.scheduledStart && isSameDay(new Date(m.scheduledStart), d)).length;
+
+                      return (
+                        <div
+                          key={i}
+                          onClick={() => {
+                            setSelectedDate(d);
+                            setViewMode("day");
+                          }}
+                          className={`p-2.5 rounded-xl cursor-pointer transition-all border ${
+                            isSelected
+                              ? "bg-primary/10 border-primary"
+                              : isToday
+                              ? "bg-emerald-500/10 border-emerald-500/40"
+                              : "bg-secondary/40 border-border hover:bg-secondary"
+                          }`}
+                        >
+                          <div className="text-[11px] font-bold uppercase text-muted-foreground">
+                            {d.toLocaleDateString([], { weekday: "short" })}
+                          </div>
+                          <div className={`text-base font-extrabold ${isToday ? "text-emerald-500" : isSelected ? "text-primary" : "text-foreground"}`}>
+                            {d.getDate()}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground font-medium mt-0.5">
+                            {dayEventsCount} {dayEventsCount === 1 ? "meeting" : "meetings"}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Hourly Rows in Week Grid */}
+                  <div className="space-y-1.5 max-h-[550px] overflow-y-auto pr-1">
+                    {Array.from({ length: 24 }, (_, hour) => (
+                      <div key={hour} className="grid grid-cols-7 gap-2 items-center text-xs py-1 border-b border-border/40">
+                        {weekDays.map((d, dayIdx) => {
+                          const evts = meetings.filter((m) => {
+                            if (!m.scheduledStart) return false;
+                            const mDate = new Date(m.scheduledStart);
+                            return isSameDay(mDate, d) && mDate.getHours() === hour;
+                          });
+
+                          return (
+                            <div key={dayIdx} className="min-h-[38px] p-1">
+                              {evts.length > 0 ? (
+                                evts.map((evt) => (
+                                  <div
+                                    key={evt.id}
+                                    onClick={() => {
+                                      setSelectedDate(d);
+                                      setViewMode("day");
+                                    }}
+                                    className="p-1.5 rounded-lg bg-primary/20 text-primary border border-primary/30 text-[10px] font-bold truncate cursor-pointer hover:opacity-90"
+                                    title={`${evt.title} (${evt.timeFormatted})`}
+                                  >
+                                    {evt.title}
+                                  </div>
+                                ))
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedDate(d);
+                                    handleSlotClick(hour);
+                                  }}
+                                  className="w-full h-full rounded border border-transparent hover:border-dashed hover:border-border text-[9px] text-muted-foreground/30 hover:text-muted-foreground flex items-center justify-center"
+                                >
+                                  {formatHourLabel(hour)}
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* VIEW MODE 4: FULL AGENDA LIST VIEW */}
+            {viewMode === "list" && (
+              <div className="space-y-4 animate-in fade-in duration-200">
+                {meetings.length === 0 ? (
+                  /* Empty State */
+                  <div className="bg-card border border-border rounded-2xl p-12 text-center space-y-4 shadow-sm">
+                    <div className="w-12 h-12 rounded-2xl bg-muted/30 border border-border flex items-center justify-center mx-auto text-muted-foreground">
+                      <Inbox className="w-6 h-6" />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="font-bold text-sm text-foreground">No meetings scheduled</h3>
+                      <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                        Schedule a new video meeting session with your team members to collaborate on SFU stage.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setIsModalOpen(true)}
+                      className="bg-primary text-primary-foreground text-xs font-semibold px-4 py-2.5 rounded-xl hover:opacity-90 transition-all inline-flex items-center gap-2"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Schedule First Meeting</span>
+                    </button>
+                  </div>
+                ) : (
+                  meetings.map((m) => (
+                    <div
+                      key={m.id}
+                      className="bg-card border border-border p-5 rounded-2xl space-y-4 hover:border-primary/40 transition-all shadow-sm group"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3.5">
+                          <div className="p-3 bg-primary/10 text-primary rounded-xl border border-primary/20 shrink-0">
+                            <Video className="w-5 h-5" />
+                          </div>
+
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-bold text-sm text-foreground">{m.title}</h3>
+                              <span
+                                className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full border ${
+                                  m.status === "active"
+                                    ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 animate-pulse"
+                                    : "bg-primary/10 text-primary border-primary/30"
+                                }`}
+                              >
+                                {m.status === "active" ? "LIVE NOW" : m.status}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
+                              <span className="flex items-center gap-1 font-medium text-foreground/80">
+                                <Clock className="w-3.5 h-3.5 text-primary" />
+                                <span>{m.timeFormatted}</span>
+                              </span>
+                              <span>•</span>
+                              <span className="flex items-center gap-1">
+                                <User className="w-3.5 h-3.5" />
+                                <span>Host: {m.hostName}</span>
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handlePostToChat(m)}
+                            disabled={broadcastingId === m.id}
+                            className="bg-secondary border border-border text-foreground hover:bg-secondary/80 text-xs font-semibold px-3 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-xs"
+                            title="Post announcement card to chat channel"
+                          >
+                            {broadcastingId === m.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Send className="w-3.5 h-3.5 text-primary" />
+                            )}
+                            <span>Post to Chat</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleCopyLink(m.meetingCode)}
+                            className="bg-secondary border border-border text-foreground hover:bg-secondary/80 text-xs font-semibold px-3 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-xs"
+                            title="Copy meeting join link"
+                          >
+                            {copiedCode === m.meetingCode ? (
+                              <Check className="w-3.5 h-3.5 text-emerald-500" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5 text-muted-foreground" />
+                            )}
+                            <span>{copiedCode === m.meetingCode ? "Copied" : "Copy Link"}</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleJoinSession(m.meetingCode)}
+                            className="bg-primary text-primary-foreground text-xs font-semibold px-4 py-2 rounded-xl hover:opacity-90 transition-all flex items-center gap-1.5 shadow-sm"
+                          >
+                            <Radio className="w-3.5 h-3.5" />
+                            <span>Join Stage</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleDelete(m.id)}
+                            className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl transition-all"
+                            title="Delete meeting"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {m.description && (
+                        <p className="text-xs text-muted-foreground leading-relaxed bg-secondary/30 p-3 rounded-xl border border-border/40 font-normal">
+                          {m.description}
+                        </p>
+                      )}
+
+                      {/* Participants & Groups Row */}
+                      <div className="bg-secondary/20 p-3 rounded-xl border border-border/50 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-foreground flex items-center gap-1.5">
+                            <Users className="w-3.5 h-3.5 text-primary" />
+                            <span>Invited Participants & Groups</span>
+                          </span>
+                          <button
+                            onClick={() => handleOpenAddInvites(m)}
+                            className="text-[11px] text-primary hover:underline font-semibold flex items-center gap-1"
+                          >
+                            <UserPlus className="w-3 h-3" />
+                            <span>+ Add People / Groups</span>
+                          </button>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {(m.invitedGroups || []).map((grp, idx) => (
+                            <span
+                              key={idx}
+                              className="inline-flex items-center gap-1 bg-primary/10 text-primary border border-primary/20 text-[10px] font-medium px-2 py-0.5 rounded-full"
+                            >
+                              <Hash className="w-2.5 h-2.5" />
+                              <span>{grp}</span>
+                            </span>
+                          ))}
+                          {(m.participants || []).map((p) => (
+                            <span
+                              key={p.id}
+                              className="inline-flex items-center gap-1 bg-secondary text-foreground border border-border text-[10px] font-medium px-2 py-0.5 rounded-full"
+                            >
+                              <span className="w-3.5 h-3.5 rounded-full bg-primary/20 text-primary text-[8px] flex items-center justify-center font-bold">
+                                {p.name.charAt(0).toUpperCase()}
+                              </span>
+                              <span>{p.name}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Session Flags Bar */}
+                      <div className="flex items-center justify-between text-[11px] pt-1 text-muted-foreground border-t border-border/40">
+                        <div className="flex items-center gap-3">
+                          <span className="flex items-center gap-1 font-mono text-[10px] bg-secondary px-2 py-0.5 rounded border border-border">
+                            <LinkIcon className="w-3 h-3 text-primary" />
+                            <span>{m.meetingCode}</span>
+                          </span>
+                          {m.isWaitingRoom && (
+                            <span className="flex items-center gap-1 text-[10px]">
+                              <Shield className="w-3 h-3 text-emerald-500" /> Waiting Room Enabled
+                            </span>
+                          )}
+                          {m.isRecording && (
+                            <span className="flex items-center gap-1 text-[10px]">
+                              <Video className="w-3 h-3 text-amber-500" /> Auto Cloud Recording
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
 
