@@ -96,5 +96,9 @@ USING (
 );
 
 -- 6. Channels RLS
-CREATE POLICY "Channels are viewable by authenticated users" 
-ON public.channels FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Public channels are viewable by everyone" 
+ON public.channels FOR SELECT TO public USING (true);
+
+CREATE POLICY "Channels can be created by everyone" 
+ON public.channels FOR INSERT TO public WITH CHECK (true);
+

@@ -36,6 +36,7 @@ export function AuthDialog({ isOpen, onClose, defaultMode = "login", onSuccessLo
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e && e.preventDefault) e.preventDefault();
+    if (loading) return;
     setError(null);
     setMessage(null);
     setLoading(true);
@@ -73,10 +74,14 @@ export function AuthDialog({ isOpen, onClose, defaultMode = "login", onSuccessLo
           localStorage.setItem("chatx_view_mode", "workspace");
         }
 
-        if (onSuccessLogin) {
-          onSuccessLogin();
-        }
         onClose();
+        if (onSuccessLogin) {
+          try {
+            onSuccessLogin();
+          } catch (err) {
+            console.warn("onSuccessLogin error:", err);
+          }
+        }
         setLoading(false);
         return;
       } else if (mode === "signup") {
@@ -284,7 +289,6 @@ export function AuthDialog({ isOpen, onClose, defaultMode = "login", onSuccessLo
 
             <button
               type="submit"
-              onClick={handleSubmit}
               disabled={loading}
               className="w-full bg-primary text-primary-foreground text-xs font-semibold py-2.5 rounded-lg hover:opacity-90 transition-all flex items-center justify-center gap-2 shadow-md disabled:opacity-50"
             >

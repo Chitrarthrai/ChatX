@@ -38,10 +38,12 @@ interface SiteTourProps {
 }
 
 export function SiteTour({ onComplete }: SiteTourProps) {
+  const [mounted, setMounted] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     const checkTourStatus = async () => {
       if (typeof window === "undefined") return;
       // Fast path: localStorage
@@ -107,6 +109,8 @@ export function SiteTour({ onComplete }: SiteTourProps) {
     setCurrentStep(0);
     setIsOpen(true);
   };
+
+  if (!mounted) return null;
 
   if (!isOpen) {
     return (

@@ -12,8 +12,10 @@ import { ThreadDrawer } from "@/components/chat/thread-drawer";
 import { AIDrawer } from "@/components/ai/ai-drawer";
 import { MessageItem } from "@/components/chat/message-item";
 import { signOut } from "@/services/auth";
-import { fetchChannels, createChannel, fetchProfilesDirectory } from "@/services/channels";
-import { sendMessage, subscribeToMessages, fetchMessages, markMessagesAsRead, getOrCreateDirectConversation } from "@/services/messages";
+import { fetchChannels, createChannel, fetchDirectMessageContacts } from "@/services/channels";
+import { sendMessage, subscribeToMessages, fetchMessages, markMessagesAsRead, getOrCreateDirectConversation, getOrCreateChannelConversation } from "@/services/messages";
+import { uploadAttachment } from "@/services/storage";
+import { createClient } from "@/lib/supabase/client";
 import type { ChannelType, Message } from "@chatx/types";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -72,7 +74,14 @@ export default function DashboardPage() {
   const { theme, setTheme } = useTheme();
   const { user, profile, isLoading, clearLocalUser } = useAuth();
   const [mounted, setMounted] = useState(false);
-  const [viewMode, setViewMode] = useState<"landing" | "workspace">("landing");
+  const [viewMode, setViewMode] = useState<"landing" | "workspace">(() => {
+    if (typeof window !== "undefined") {
+      const savedMode = localStorage.getItem("chatx_view_mode");
+      const savedUser = localStorage.getItem("chatx_active_user");
+      if (savedUser || savedMode === "workspace") return "workspace";
+    }
+    return "landing";
+  });
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -96,13 +105,13 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setMounted(true);
-    if (isLoading) return;
 
     if (typeof window !== "undefined") {
       const savedMode = localStorage.getItem("chatx_view_mode");
       const savedUserStr = localStorage.getItem("chatx_active_user");
       if (user || savedUserStr || savedMode === "workspace") {
         setViewMode("workspace");
+        setIsAuthOpen(false);
         localStorage.setItem("chatx_view_mode", "workspace");
 
         const activeDM = localStorage.getItem("chatx_active_dm");
@@ -121,7 +130,7 @@ export default function DashboardPage() {
         }
       }
     }
-  }, [user, isLoading]);
+  }, [user]);
 
   // Persist active selected chat selection
   useEffect(() => {
@@ -131,10 +140,12 @@ export default function DashboardPage() {
   }, [selectedChat, user]);
 
   const handleEnterWorkspace = () => {
+    setIsAuthOpen(false);
     setViewMode("workspace");
     if (typeof window !== "undefined") {
       localStorage.setItem("chatx_view_mode", "workspace");
     }
+    loadWorkspaceData();
   };
 
   const handleGoToLanding = () => {
@@ -181,45 +192,72 @@ export default function DashboardPage() {
   const [channels, setChannels] = useState<{ id: string; name: string; topic: string; type: ChannelType; locked: boolean }[]>([]);
   const [directMessages, setDirectMessages] = useState<{ id: string; name: string; status: "online" | "away" | "dnd" | "offline"; role: string }[]>([]);
 
-  useEffect(() => {
-    fetchChannels().then((data) => {
-      if (data && data.length > 0) {
-        setChannels(data);
+  const loadWorkspaceData = async () => {
+    try {
+      const channelData = await fetchChannels();
+      if (channelData && channelData.length > 0) {
+        setChannels(channelData);
         const savedChat = typeof window !== "undefined" ? localStorage.getItem("chatx_active_chat") : null;
-        if (savedChat && (data.some((c) => c.name === savedChat) || directMessages.some((dm) => dm.name === savedChat))) {
+        if (savedChat && (channelData.some((c) => c.name === savedChat) || directMessages.some((dm) => dm.name === savedChat))) {
           setSelectedChat(savedChat);
         } else {
-          setSelectedChat(data[0].name);
+          setSelectedChat(channelData[0].name);
         }
       }
-    }).catch(() => {});
 
-    fetchProfilesDirectory().then((profs) => {
-      if (profs && profs.length > 0) {
-        setDirectMessages(profs.map((p) => ({ id: p.id, name: p.name, status: p.status, role: p.role })));
+      const effectiveUserId = user?.id || profile?.id || (typeof window !== "undefined" ? (() => {
+        try {
+          return JSON.parse(localStorage.getItem("chatx_active_user") || "{}")?.id;
+        } catch { return ""; }
+      })() : "");
+
+      const contacts = await fetchDirectMessageContacts(effectiveUserId || "");
+      if (contacts && contacts.length > 0) {
+        setDirectMessages(contacts.map((p) => ({ id: p.id, name: p.name, status: p.status, role: p.role })));
       }
-    }).catch(() => {});
-  }, [user]);
+      console.warn("[ChatX Workspace] Loaded channels:", channelData?.length, "DMs:", contacts?.length);
+    } catch (err) {
+      console.warn("Error loading channels and contacts:", err);
+    }
+  };
+
+  useEffect(() => {
+    loadWorkspaceData();
+  }, [viewMode, user, profile, mounted]);
 
   const [messagesByChannel, setMessagesByChannel] = useState<Record<string, Message[]>>({});
+
+  // Helper: resolve the real conversation UUID for the current selectedChat.
+  // channels.id = conversations.id
+  const resolveActiveConversationId = async (): Promise<string | null> => {
+    let activeChan = channels.find((c) => c.name === selectedChat);
+    if (!activeChan) {
+      const allChans = await fetchChannels();
+      if (allChans && allChans.length > 0 && channels.length === 0) {
+        setChannels(allChans);
+      }
+      activeChan = allChans.find((c) => c.name === selectedChat);
+    }
+    const activeDM = directMessages.find((dm) => dm.name === selectedChat);
+    const currentUserId = user?.id || profile?.id;
+
+    if (activeChan?.id) {
+      return await getOrCreateChannelConversation(activeChan.id, currentUserId, activeChan.name);
+    }
+    if (activeDM?.id && currentUserId) {
+      return await getOrCreateDirectConversation(currentUserId, activeDM.id);
+    }
+    return null;
+  };
 
   // Dynamic message query from Supabase database whenever selectedChat changes
   useEffect(() => {
     if (!selectedChat) return;
 
+    let subscription: ReturnType<typeof subscribeToMessages> | null = null;
+
     const resolveAndFetch = async () => {
-      const activeChan = channels.find((c) => c.name === selectedChat);
-      const activeDM = directMessages.find((dm) => dm.name === selectedChat);
-
-      let targetConvId = activeChan?.id;
-
-      if (!targetConvId && activeDM?.id) {
-        const currentUserId = user?.id || profile?.id;
-        if (currentUserId) {
-          targetConvId = await getOrCreateDirectConversation(currentUserId, activeDM.id);
-        }
-      }
-
+      const targetConvId = await resolveActiveConversationId();
       if (!targetConvId) return;
 
       const currentUserId = user?.id || profile?.id;
@@ -228,13 +266,33 @@ export default function DashboardPage() {
       }
 
       const fetched = await fetchMessages(targetConvId);
-      setMessagesByChannel((prev) => ({
-        ...prev,
-        [selectedChat]: fetched || [],
-      }));
+      if (fetched) {
+        setMessagesByChannel((prev) => ({
+          ...prev,
+          [selectedChat]: fetched,
+        }));
+      }
+
+      // Subscribe to live Realtime message updates for this conversation
+      subscription = subscribeToMessages(targetConvId, (newMsg) => {
+        setMessagesByChannel((prev) => {
+          const currentList = prev[selectedChat] || [];
+          if (currentList.some((m) => m.id === newMsg.id)) return prev;
+          return {
+            ...prev,
+            [selectedChat]: [...currentList, newMsg],
+          };
+        });
+      });
     };
 
     resolveAndFetch().catch((err) => console.warn("Database message fetch:", err));
+
+    return () => {
+      if (subscription) {
+        subscription.unsubscribe();
+      }
+    };
   }, [selectedChat, channels, directMessages, user, profile]);
 
   const handleCreateChannel = async (newChannel: { name: string; topic: string; type: ChannelType; isPrivate: boolean }) => {
@@ -243,23 +301,31 @@ export default function DashboardPage() {
     setSelectedChat(created.name);
   };
 
-  const handleCreatePoll = (poll: { question: string; options: string[]; isMultipleChoice: boolean; isAnonymous: boolean }) => {
+  const handleCreatePoll = async (poll: { question: string; options: string[]; isMultipleChoice: boolean; isAnonymous: boolean }) => {
+    const senderUserId = user?.id || profile?.id;
+    if (!senderUserId) return;
+
+    const activeConvId = await resolveActiveConversationId();
+    if (!activeConvId) return;
+
+    const pollContent = `📊 POLL: ${poll.question}\nOptions: ${poll.options.join(" | ")}`;
     const pollMsg: Message = {
       id: Date.now().toString(),
-      conversationId: "c1",
-      senderId: user?.id || "u2",
-      content: `📊 POLL: ${poll.question}\nOptions: ${poll.options.join(" | ")}`,
+      conversationId: activeConvId,
+      senderId: senderUserId,
+      content: pollContent,
       type: "poll",
       isEdited: false,
       isPinned: true,
       isLocked: false,
+      status: "sent",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       sender: {
-        id: user?.id || "u2",
-        email: user?.email || "user@chatx.platform",
-        username: profile?.username || "you",
-        fullName: profile?.fullName || user?.email || "You",
+        id: senderUserId,
+        email: user?.email || profile?.email || "",
+        username: profile?.username || "",
+        fullName: profile?.fullName || user?.email || "User",
         status: profile?.status || "online",
         lastSeen: new Date().toISOString(),
         createdAt: new Date().toISOString(),
@@ -271,6 +337,16 @@ export default function DashboardPage() {
       ...prev,
       [selectedChat]: [...(prev[selectedChat] || []), pollMsg],
     }));
+
+    try {
+      await sendMessage({ conversationId: activeConvId, content: pollContent, type: "poll" }, senderUserId);
+      const fetchedMsgs = await fetchMessages(activeConvId);
+      if (fetchedMsgs && fetchedMsgs.length > 0) {
+        setMessagesByChannel((prev) => ({ ...prev, [selectedChat]: fetchedMsgs }));
+      }
+    } catch (err) {
+      console.warn("Poll send error:", err);
+    }
   };
 
   const handleConfirmLockState = (pin: string, lock: boolean) => {
@@ -289,16 +365,10 @@ export default function DashboardPage() {
       localStorage.removeItem(`chatx_draft_${selectedChat}`);
     }
 
-    const activeChan = channels.find((c) => c.name === selectedChat);
-    const activeDM = directMessages.find((dm) => dm.name === selectedChat);
-    let activeConvId = activeChan?.id;
-
     const senderUserId = user?.id || profile?.id;
     if (!senderUserId) return;
 
-    if (!activeConvId && activeDM?.id) {
-      activeConvId = await getOrCreateDirectConversation(senderUserId, activeDM.id);
-    }
+    const activeConvId = await resolveActiveConversationId();
     if (!activeConvId) return;
 
     const newMsg: Message = {
@@ -347,22 +417,39 @@ export default function DashboardPage() {
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (e.target) {
+      e.target.value = "";
+    }
+
+    const senderUserId = user?.id || profile?.id;
+    if (!senderUserId) return;
+
+    const activeConvId = await resolveActiveConversationId();
+    if (!activeConvId) return;
+
+    const mimeType = file.type || "";
+    const msgType = mimeType.startsWith("image/") ? "image" : "document";
+    const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+    const contentText = `📎 Attached File: ${file.name} (${fileSizeMB} MB)`;
+
     const attachmentMsg: Message = {
       id: Date.now().toString(),
-      conversationId: "c1",
-      senderId: user?.id || "u2",
-      content: `📎 Attached File: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`,
-      type: "document",
+      conversationId: activeConvId,
+      senderId: senderUserId,
+      content: contentText,
+      type: msgType,
       isEdited: false,
       isPinned: false,
       isLocked: false,
+      status: "sent",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       sender: {
-        id: user?.id || "u2",
+        id: senderUserId,
         email: user?.email || "user@chatx.platform",
         username: profile?.username || "you",
         fullName: profile?.fullName || user?.email || "You",
@@ -372,29 +459,74 @@ export default function DashboardPage() {
         updatedAt: new Date().toISOString(),
       },
     };
+
     setMessagesByChannel((prev) => ({
       ...prev,
       [selectedChat]: [...(prev[selectedChat] || []), attachmentMsg],
     }));
+
+    try {
+      try {
+        await uploadAttachment(file);
+      } catch (storageErr) {
+        console.warn("Storage upload warning (proceeding with message persistence):", storageErr);
+      }
+
+      try {
+        const supabase = createClient();
+        await supabase.from("files").insert({
+          uploader_id: senderUserId,
+          name: file.name,
+          size: file.size,
+          mime_type: mimeType || "application/octet-stream",
+          folder_name: "Chat Attachments",
+        });
+      } catch (fileErr) {
+        console.warn("Files DB insert warning:", fileErr);
+      }
+
+      await sendMessage(
+        { conversationId: activeConvId, content: contentText, type: msgType },
+        senderUserId
+      );
+
+      const fetchedMsgs = await fetchMessages(activeConvId);
+      if (fetchedMsgs && fetchedMsgs.length > 0) {
+        setMessagesByChannel((prev) => ({
+          ...prev,
+          [selectedChat]: fetchedMsgs,
+        }));
+      }
+    } catch (err) {
+      console.warn("Error uploading file message:", err);
+    }
   };
 
   const handleVoiceRecord = () => {
     setIsRecordingVoice(true);
-    setTimeout(() => {
+    setTimeout(async () => {
       setIsRecordingVoice(false);
+      const senderUserId = user?.id || profile?.id;
+      if (!senderUserId) return;
+
+      const activeConvId = await resolveActiveConversationId();
+      if (!activeConvId) return;
+
+      const voiceContent = `🎙️ Voice Note (0:14) — Audio stream recorded and attached`;
       const voiceMsg: Message = {
         id: Date.now().toString(),
-        conversationId: "c1",
-        senderId: user?.id || "u2",
-        content: `🎙️ Voice Note (0:14) — Audio stream recorded and attached`,
-        type: "text",
+        conversationId: activeConvId,
+        senderId: senderUserId,
+        content: voiceContent,
+        type: "voice",
         isEdited: false,
         isPinned: false,
         isLocked: false,
+        status: "sent",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         sender: {
-          id: user?.id || "u2",
+          id: senderUserId,
           email: user?.email || "user@chatx.platform",
           username: profile?.username || "you",
           fullName: profile?.fullName || user?.email || "You",
@@ -404,10 +536,27 @@ export default function DashboardPage() {
           updatedAt: new Date().toISOString(),
         },
       };
+
       setMessagesByChannel((prev) => ({
         ...prev,
         [selectedChat]: [...(prev[selectedChat] || []), voiceMsg],
       }));
+
+      try {
+        await sendMessage(
+          { conversationId: activeConvId, content: voiceContent, type: "voice" },
+          senderUserId
+        );
+        const fetchedMsgs = await fetchMessages(activeConvId);
+        if (fetchedMsgs && fetchedMsgs.length > 0) {
+          setMessagesByChannel((prev) => ({
+            ...prev,
+            [selectedChat]: fetchedMsgs,
+          }));
+        }
+      } catch (err) {
+        console.warn("Voice message send error:", err);
+      }
     }, 1500);
   };
 
@@ -425,11 +574,24 @@ export default function DashboardPage() {
   const currentMessages = messagesByChannel[selectedChat] || [];
   const currentChannelInfo = channels.find((c) => c.name === selectedChat);
 
+  if (!mounted) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-background text-foreground">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 bg-primary/20 text-primary rounded-xl flex items-center justify-center font-bold text-lg animate-pulse">
+            X
+          </div>
+          <div className="text-xs text-muted-foreground animate-pulse">Loading ChatX Workspace...</div>
+        </div>
+      </div>
+    );
+  }
+
   if (viewMode === "landing") {
     return (
       <>
         <AuthDialog
-          isOpen={isAuthOpen}
+          isOpen={isAuthOpen && !user}
           onClose={() => setIsAuthOpen(false)}
           defaultMode={authMode}
           onSuccessLogin={() => {
@@ -451,10 +613,13 @@ export default function DashboardPage() {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground relative">
       <AuthDialog
-        isOpen={isAuthOpen}
+        isOpen={isAuthOpen && !user}
         onClose={() => setIsAuthOpen(false)}
         defaultMode={authMode}
-        onSuccessLogin={() => handleEnterWorkspace()}
+        onSuccessLogin={() => {
+          setIsAuthOpen(false);
+          handleEnterWorkspace();
+        }}
       />
       <SiteTour />
       <ProfileDialog isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
@@ -801,16 +966,19 @@ export default function DashboardPage() {
                       <span
                         className={`absolute bottom-0 right-0 w-2 h-2 rounded-full border border-card ${
                           dm.status === "online"
-                            ? "bg-success"
+                            ? "bg-emerald-500"
                             : dm.status === "away"
-                            ? "bg-warning"
-                            : "bg-destructive"
+                            ? "bg-amber-500"
+                            : dm.status === "dnd"
+                            ? "bg-rose-500"
+                            : "bg-slate-400"
                         }`}
+                        title={dm.status || "offline"}
                       />
                     </div>
                     <div className="flex flex-col text-left truncate">
                       <span className="truncate font-medium text-foreground">{dm.name}</span>
-                      <span className="text-[10px] text-muted-foreground">{dm.role}</span>
+                      <span className="text-[10px] text-muted-foreground capitalize">{dm.status || "offline"} • {dm.role}</span>
                     </div>
                   </div>
                 </button>

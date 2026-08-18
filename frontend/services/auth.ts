@@ -65,10 +65,19 @@ export async function updatePassword(password: string) {
 export async function signOut() {
   const supabase = createClient();
   if (typeof window !== "undefined") {
-    // Only clear auth-specific keys — do NOT clear chatx_view_mode
-    // which is set by handleSignOut immediately after to route to landing
-    localStorage.removeItem("chatx_active_user");
-    localStorage.removeItem("sb-bvvocllzbvrodjdgjyib-auth-token");
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith("chatx_") || key.startsWith("sb-"))) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+      localStorage.setItem("chatx_view_mode", "landing");
+    } catch (err) {
+      console.warn("Storage cleanup error:", err);
+    }
   }
   const { error } = await supabase.auth.signOut();
   if (error && !error.message.includes('session_not_found')) {

@@ -74,7 +74,7 @@ export function ProfileDialog({ isOpen, onClose }: ProfileDialogProps) {
       console.error("Failed to revoke sessions:", err);
     }
     if (typeof window !== "undefined") {
-      window.location.href = "/landing";
+      window.location.href = "/";
     }
   };
 

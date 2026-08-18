@@ -27,10 +27,27 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(() => {
+    if (typeof window !== "undefined") {
+      const savedUserStr = localStorage.getItem("chatx_active_user");
+      if (savedUserStr) {
+        try {
+          const savedUser = JSON.parse(savedUserStr);
+          if (savedUser && savedUser.id) return savedUser;
+        } catch { /* parse fallback */ }
+      }
+    }
+    return null;
+  });
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [session, setSession] = useState<Session | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      const savedUserStr = localStorage.getItem("chatx_active_user");
+      if (savedUserStr) return false;
+    }
+    return true;
+  });
 
   const fetchUserProfile = async (userId: string) => {
     try {
@@ -104,6 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(u as User);
     if (typeof window !== "undefined") {
       localStorage.setItem("chatx_active_user", JSON.stringify(u));
+      localStorage.setItem("chatx_view_mode", "workspace");
     }
     if (u?.id) {
       fetchUserProfile(u.id);
@@ -115,8 +133,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfile(null);
     setSession(null);
     if (typeof window !== "undefined") {
-      localStorage.removeItem("chatx_active_user");
-      localStorage.setItem("chatx_view_mode", "landing");
+      try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith("chatx_") || key.startsWith("sb-"))) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach((k) => localStorage.removeItem(k));
+        localStorage.setItem("chatx_view_mode", "landing");
+      } catch { /* storage fallback */ }
     }
   };
 

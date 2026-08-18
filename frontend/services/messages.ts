@@ -51,13 +51,22 @@ export async function getOrCreateDirectConversation(userId: string, targetUserId
     const convIds = userConvs.map((c) => c.conversation_id);
     const { data: sharedConvs } = await supabase
       .from('conversation_members')
-      .select('conversation_id, conversation:conversations(type)')
+      .select('conversation_id')
       .eq('user_id', targetUserId)
       .in('conversation_id', convIds);
 
-    const direct = sharedConvs?.find((c: any) => c.conversation?.type === 'direct');
-    if (direct?.conversation_id) {
-      return direct.conversation_id;
+    if (sharedConvs && sharedConvs.length > 0) {
+      const targetConvIds = sharedConvs.map((s) => s.conversation_id);
+      const { data: directConvs } = await supabase
+        .from('conversations')
+        .select('id')
+        .in('id', targetConvIds)
+        .eq('type', 'direct')
+        .limit(1);
+
+      if (directConvs && directConvs.length > 0) {
+        return directConvs[0].id;
+      }
     }
   }
 
@@ -72,11 +81,77 @@ export async function getOrCreateDirectConversation(userId: string, targetUserId
   }
 
   await supabase.from('conversation_members').insert([
-    { conversation_id: newConv.id, user_id: userId },
-    { conversation_id: newConv.id, user_id: targetUserId },
+    { conversation_id: newConv.id, user_id: userId, role: 'member' },
+    { conversation_id: newConv.id, user_id: targetUserId, role: 'member' },
   ]);
 
   return newConv.id;
+}
+
+/**
+ * Get or create a conversation row for a channel.
+ * 
+ * The DB schema has separate `channels` and `conversations` tables.
+ * `messages.conversation_id` references `conversations.id`, NOT `channels.id`.
+ * This function bridges the two: it finds (or creates) a `conversations` row
+ * whose `name` matches the channel ID, so messages can be stored against
+ * a real conversation UUID.
+ */
+export async function getOrCreateChannelConversation(channelId: string, userId?: string, channelName?: string): Promise<string> {
+  const supabase = createClient();
+
+  // 1. Check if conversation with id = channelId exists
+  const { data: existingById } = await supabase
+    .from('conversations')
+    .select('id')
+    .eq('id', channelId)
+    .maybeSingle();
+
+  if (existingById?.id) {
+    if (userId) {
+      await supabase
+        .from('conversation_members')
+        .upsert({ conversation_id: existingById.id, user_id: userId, role: 'member' }, { onConflict: 'conversation_id,user_id' });
+    }
+    return existingById.id;
+  }
+
+  // 2. Check if a conversation matching the channel name exists
+  if (channelName) {
+    const { data: existingByName } = await supabase
+      .from('conversations')
+      .select('id')
+      .eq('name', channelName)
+      .eq('type', 'channel')
+      .maybeSingle();
+
+    if (existingByName?.id) {
+      if (userId) {
+        await supabase
+          .from('conversation_members')
+          .upsert({ conversation_id: existingByName.id, user_id: userId, role: 'member' }, { onConflict: 'conversation_id,user_id' });
+      }
+      return existingByName.id;
+    }
+  }
+
+  // 3. Create a conversation row with id = channelId so messages are always keyed to channelId
+  const { data: newConv } = await supabase
+    .from('conversations')
+    .insert({ id: channelId, type: 'channel', name: channelName || 'channel' })
+    .select('id')
+    .maybeSingle();
+
+  if (newConv?.id) {
+    if (userId) {
+      await supabase
+        .from('conversation_members')
+        .insert({ conversation_id: newConv.id, user_id: userId, role: 'member' });
+    }
+    return newConv.id;
+  }
+
+  return channelId;
 }
 
 const messageMemoryCache = new Map<string, Message[]>();
