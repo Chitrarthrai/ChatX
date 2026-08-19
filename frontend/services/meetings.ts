@@ -377,3 +377,121 @@ export function subscribeToMeetings(onMeetingEvent: () => void) {
 
   return channel;
 }
+
+export interface MeetingChatMessageItem {
+  id: string;
+  meetingId?: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar?: string;
+  content: string;
+  createdAt: string;
+  timeFormatted: string;
+}
+
+export async function fetchMeetingChatMessages(meetingCode: string): Promise<MeetingChatMessageItem[]> {
+  try {
+    const rawMeetings: any = await supabaseRestFetch(
+      `meetings?meeting_code=eq.${meetingCode}&select=id`
+    );
+    if (!rawMeetings || rawMeetings.length === 0) return [];
+    const meetingId = rawMeetings[0].id;
+
+    const chatRows: any = await supabaseRestFetch(
+      `meeting_chat?meeting_id=eq.${meetingId}&select=id,meeting_id,sender_id,content,created_at&order=created_at.asc`
+    );
+    if (!chatRows || !Array.isArray(chatRows)) return [];
+
+    const senderIds = Array.from(new Set(chatRows.map((c: any) => c.sender_id).filter(Boolean)));
+    let userMap = new Map<string, any>();
+    if (senderIds.length > 0) {
+      const profs: any = await supabaseRestFetch(
+        `profiles?id=in.(${senderIds.join(',')})&select=id,full_name,email,avatar_url`
+      );
+      if (profs && Array.isArray(profs)) {
+        for (const p of profs) userMap.set(p.id, p);
+      }
+    }
+
+    return chatRows.map((r: any) => {
+      const u = userMap.get(r.sender_id);
+      const d = new Date(r.created_at || Date.now());
+      const hours = d.getHours();
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      const timeFormatted = `${hours % 12 || 12}:${minutes} ${hours >= 12 ? 'PM' : 'AM'}`;
+      return {
+        id: r.id,
+        meetingId: r.meeting_id,
+        senderId: r.sender_id,
+        senderName: u?.full_name || u?.email || 'Participant',
+        senderAvatar: u?.avatar_url,
+        content: r.content,
+        createdAt: r.created_at,
+        timeFormatted,
+      };
+    });
+  } catch (err) {
+    console.warn('fetchMeetingChatMessages error:', err);
+    return [];
+  }
+}
+
+export async function sendMeetingChatMessage(
+  meetingCode: string,
+  senderId: string,
+  content: string
+): Promise<MeetingChatMessageItem | null> {
+  try {
+    const supabase = createClient();
+    const { data: meetings } = await supabase
+      .from('meetings')
+      .select('id')
+      .eq('meeting_code', meetingCode)
+      .limit(1);
+
+    let meetingId = meetings && meetings.length > 0 ? meetings[0].id : null;
+    if (!meetingId) {
+      const { data: newMeeting } = await supabase
+        .from('meetings')
+        .insert({
+          meeting_code: meetingCode,
+          title: `Meeting ${meetingCode}`,
+          host_id: senderId,
+          status: 'active',
+          scheduled_start: new Date().toISOString(),
+        })
+        .select('id')
+        .single();
+      if (newMeeting) meetingId = newMeeting.id;
+    }
+
+    if (meetingId) {
+      const { data: newMsg } = await supabase
+        .from('meeting_chat')
+        .insert({
+          meeting_id: meetingId,
+          sender_id: senderId,
+          content,
+        })
+        .select('*')
+        .single();
+
+      const d = new Date();
+      const hours = d.getHours();
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      return {
+        id: newMsg?.id || `msg-${Date.now()}`,
+        meetingId,
+        senderId,
+        senderName: 'You',
+        content,
+        createdAt: newMsg?.created_at || new Date().toISOString(),
+        timeFormatted: `${hours % 12 || 12}:${minutes} ${hours >= 12 ? 'PM' : 'AM'}`,
+      };
+    }
+    return null;
+  } catch (err) {
+    console.warn('sendMeetingChatMessage error:', err);
+    return null;
+  }
+}

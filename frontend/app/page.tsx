@@ -36,7 +36,7 @@ import { uploadAttachment } from "@/services/storage";
 import { createClient } from "@/lib/supabase/client";
 import type { ChannelType, Message } from "@chatx/types";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useRef } from "react";
 import {
   MessageSquare,
@@ -85,6 +85,7 @@ import {
 import { LandingPage } from "@/components/landing-page";
 import { SiteTour } from "@/components/site-tour";
 import { DeviceSettingsDialog } from "@/components/meetings/device-settings-dialog";
+import { VideoMeetingStage } from "@/components/meetings/video-meeting-stage";
 import { TypingIndicator } from "@/components/chat/typing-indicator";
 
 export default function DashboardPage() {
@@ -123,16 +124,47 @@ export default function DashboardPage() {
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [activeThreadMessage, setActiveThreadMessage] = useState<Message | null>(null);
   const [isMeetingActive, setIsMeetingActive] = useState(false);
+  const [activeMeetingTitle, setActiveMeetingTitle] = useState("ChatX SFU Architecture & Engineering Sync");
+  const [activeMeetingCode, setActiveMeetingCode] = useState("chatx-qzx94i");
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
   const [isHandRaised, setIsHandRaised] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  const searchParams = useSearchParams();
+  const meetingCodeParam = searchParams ? searchParams.get("meetingCode") : null;
+  const chatParam = searchParams ? searchParams.get("chat") : null;
+
+  useEffect(() => {
+    if (meetingCodeParam) {
+      setActiveMeetingCode(meetingCodeParam);
+      setActiveMeetingTitle(`Live Meeting Session #${meetingCodeParam}`);
+      setIsMeetingActive(true);
+    }
+  }, [meetingCodeParam]);
+
+  useEffect(() => {
+    if (chatParam) {
+      setSelectedChat(chatParam);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("chatx_active_chat", chatParam);
+        localStorage.setItem("chatx_view_mode", "workspace");
+      }
+      setViewMode("workspace");
+    }
+  }, [chatParam]);
 
   // Load saved locks and archived conversations from localStorage
   useEffect(() => {
     if (typeof window !== "undefined") {
       const urlParams = new URLSearchParams(window.location.search);
       const urlChat = urlParams.get("chat");
+      const urlMeeting = urlParams.get("meetingCode");
+      if (urlMeeting) {
+        setActiveMeetingCode(urlMeeting);
+        setActiveMeetingTitle(`Live Meeting Session #${urlMeeting}`);
+        setIsMeetingActive(true);
+      }
       if (urlChat) {
         setSelectedChat(urlChat);
         localStorage.setItem("chatx_active_chat", urlChat);
@@ -1050,149 +1082,24 @@ export default function DashboardPage() {
         onClose={() => setIsDeviceSettingsOpen(false)}
       />
 
-      {/* Instant Video Meeting Modal Overlay */}
-      {isMeetingActive && (
-        <div className="fixed inset-0 z-50 meeting-stage-dark flex flex-col justify-between p-6 animate-in fade-in duration-200">
-          <div className="flex items-center justify-between z-10">
-            <div className="flex items-center gap-3">
-              <div className="w-3 h-3 rounded-full bg-destructive animate-pulse" />
-              <h2 className="text-white font-semibold text-sm">Live Meeting: ChatX Architecture Sync</h2>
-              <span className="text-xs bg-neutral-800 text-gray-300 px-2 py-0.5 rounded font-mono">08:45</span>
-              <div className="flex items-center gap-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[11px] px-2.5 py-0.5 rounded-full font-medium">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                <span>24 ms • SFU HD Stream</span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleCopyLink}
-                className="flex items-center gap-1.5 bg-neutral-800 hover:bg-neutral-700 text-white text-xs px-3 py-1.5 rounded-lg border border-neutral-700 transition-all"
-              >
-                {copiedLink ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedLink ? "Link Copied" : "Copy Link"}</span>
-              </button>
-              <button
-                onClick={() => setIsMeetingActive(false)}
-                className="p-1.5 text-gray-400 hover:text-white hover:bg-neutral-800 rounded-lg"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-
-          <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4 my-6 items-center justify-center max-w-5xl mx-auto w-full">
-            <div className="relative aspect-video bg-neutral-900 rounded-2xl border border-neutral-800 overflow-hidden flex items-center justify-center shadow-2xl">
-              <div className="w-20 h-20 rounded-full bg-primary/30 text-primary flex items-center justify-center text-2xl font-bold border-2 border-primary">
-                {(selectedChat || "P").charAt(0).toUpperCase()}
-              </div>
-              <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-lg text-white text-xs flex items-center gap-2">
-                <span>{selectedChat && selectedChat !== "Architecture & Engineering" ? selectedChat : "chitrarth rai (Peer Host)"}</span>
-                <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
-              </div>
-            </div>
-
-            <div className="relative aspect-video bg-neutral-900 rounded-2xl border border-neutral-800 overflow-hidden flex items-center justify-center shadow-2xl">
-              {isVideoOff ? (
-                <div className="w-20 h-20 rounded-full bg-neutral-800 text-gray-400 flex items-center justify-center text-2xl font-bold">
-                  {(profile?.fullName || user?.email || "U").charAt(0).toUpperCase()}
-                </div>
-              ) : (
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-center justify-center text-gray-500 text-xs">
-                  Camera Feed Active
-                </div>
-              )}
-              <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-lg text-white text-xs flex items-center gap-2">
-                <span>{profile?.fullName || "Chitrarth Rai (You)"}</span>
-                {isMuted && <MicOff className="w-3.5 h-3.5 text-destructive" />}
-                {isHandRaised && <Hand className="w-3.5 h-3.5 text-warning" />}
-              </div>
-            </div>
-          </div>
-
-          {/* Lobby Waiting Room Admission Banner */}
-          <div className="z-10 mx-auto w-full max-w-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs px-4 py-2.5 rounded-xl flex items-center justify-between shadow-lg backdrop-blur-md mb-2">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-              <span><strong>chitrarth.rai@neophyte.ai</strong> is waiting in the meeting lobby</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button onClick={() => alert("Admitted chitrarth.rai@neophyte.ai to meeting")} className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-[11px] px-3 py-1 rounded-lg transition-all">
-                Admit
-              </button>
-              <button onClick={() => alert("Declined entry")} className="bg-neutral-800 hover:bg-neutral-700 text-gray-300 font-semibold text-[11px] px-3 py-1 rounded-lg transition-all">
-                Decline
-              </button>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-center gap-4 z-10">
-            <button
-              onClick={() => setIsMuted(!isMuted)}
-              className={`p-3.5 rounded-full transition-all ${
-                isMuted ? "bg-destructive text-destructive-foreground" : "bg-neutral-800 text-white hover:bg-neutral-700"
-              }`}
-              title={isMuted ? "Unmute Mic" : "Mute Mic"}
-            >
-              {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-            </button>
-
-            <button
-              onClick={() => setIsVideoOff(!isVideoOff)}
-              className={`p-3.5 rounded-full transition-all ${
-                isVideoOff ? "bg-destructive text-destructive-foreground" : "bg-neutral-800 text-white hover:bg-neutral-700"
-              }`}
-              title={isVideoOff ? "Turn On Camera" : "Turn Off Camera"}
-            >
-              {isVideoOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
-            </button>
-
-            <button
-              onClick={() => setIsHandRaised(!isHandRaised)}
-              className={`p-3.5 rounded-full transition-all ${
-                isHandRaised ? "bg-warning text-warning-foreground" : "bg-neutral-800 text-white hover:bg-neutral-700"
-              }`}
-              title="Raise Hand"
-            >
-              <Hand className="w-5 h-5" />
-            </button>
-
-            <button
-              onClick={() => setIsDeviceSettingsOpen(true)}
-              className="p-3.5 bg-neutral-800 text-white hover:bg-neutral-700 rounded-full transition-all"
-              title="Audio & Video Settings"
-            >
-              <Settings className="w-5 h-5" />
-            </button>
-
-            <button
-              onClick={() => {
-                if (document.pictureInPictureElement) {
-                  document.exitPictureInPicture();
-                } else {
-                  alert("Picture-in-Picture mode activated");
-                }
-              }}
-              className="p-3.5 bg-neutral-800 text-white hover:bg-neutral-700 rounded-full transition-all"
-              title="Toggle Picture-in-Picture Mode"
-            >
-              <Maximize2 className="w-5 h-5" />
-            </button>
-
-            <button className="p-3.5 bg-neutral-800 text-white hover:bg-neutral-700 rounded-full transition-all" title="Share Screen">
-              <Monitor className="w-5 h-5" />
-            </button>
-
-            <button
-              onClick={() => setIsMeetingActive(false)}
-              className="p-3.5 bg-destructive text-destructive-foreground hover:opacity-90 rounded-full font-bold px-6 flex items-center gap-2"
-            >
-              <PhoneOff className="w-5 h-5" />
-              <span>Leave</span>
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Comprehensive Enterprise Video Meeting Stage */}
+      <VideoMeetingStage
+        isOpen={isMeetingActive}
+        onClose={() => {
+          setIsMeetingActive(false);
+          if (typeof window !== "undefined") {
+            const url = new URL(window.location.href);
+            url.searchParams.delete("meetingCode");
+            window.history.replaceState({}, "", url.toString());
+          }
+        }}
+        meetingTitle={activeMeetingTitle}
+        meetingCode={activeMeetingCode}
+        currentUserName={profile?.fullName || (user as any)?.user_metadata?.full_name || user?.email?.split("@")[0] || user?.email || "Chitrarth Rai"}
+        currentUserId={user?.id || profile?.id}
+        currentUserEmail={user?.email || profile?.email || ""}
+        isHost={true}
+      />
 
       {/* Primary Sidebar Navigation */}
       <aside className="flex flex-col items-center w-16 py-4 bg-card border-r border-border justify-between z-20">
@@ -1585,8 +1492,49 @@ export default function DashboardPage() {
               <span>Schedule</span>
             </button>
             <button
-              onClick={() => setIsMeetingActive(true)}
-              className="flex items-center gap-1.5 bg-primary text-primary-foreground text-xs px-3 py-1.5 rounded-md font-medium hover:opacity-90 shadow-sm transition-all"
+              onClick={async () => {
+                const code = `chatx-${Math.random().toString(36).substring(2, 8)}`;
+                const title = `${selectedChat} Instant SFU Sync`;
+                setActiveMeetingCode(code);
+                setActiveMeetingTitle(title);
+                setIsMeetingActive(true);
+
+                // Create meeting record in Supabase
+                try {
+                  const supabase = createClient();
+                  const hostId = user?.id || profile?.id;
+                  if (hostId) {
+                    await supabase.from("meetings").insert({
+                      meeting_code: code,
+                      title,
+                      host_id: hostId,
+                      status: "active",
+                      scheduled_start: new Date().toISOString(),
+                    });
+                  }
+                } catch (err) {
+                  console.warn("Meeting persistence note:", err);
+                }
+
+                // Send meeting invite card to channel chat
+                try {
+                  const currentChannel = channels.find((c) => c.name === selectedChat);
+                  const senderId = user?.id || profile?.id;
+                  if (currentChannel && senderId) {
+                    await sendMessage(
+                      {
+                        conversationId: currentChannel.id,
+                        content: `📹 **Live Instant Meeting Started!**\nHost: **${profile?.fullName || user?.email || "Host"}**\nMeeting Code: \`${code}\`\n👉 Click **Join Stage** to join this live call.`,
+                        type: "text",
+                      },
+                      senderId
+                    );
+                  }
+                } catch (err) {
+                  console.warn("Channel meeting invite notice:", err);
+                }
+              }}
+              className="flex items-center gap-1.5 bg-primary text-primary-foreground text-xs px-3 py-1.5 rounded-md font-medium hover:opacity-90 shadow-sm transition-all cursor-pointer"
             >
               <Video className="w-3.5 h-3.5" />
               <span>Start Instant Meeting</span>
@@ -1914,18 +1862,25 @@ export default function DashboardPage() {
                 {/* Live SFU Meeting Preview */}
                 <div
                   onClick={() => setIsMeetingActive(true)}
-                  className="meeting-stage-dark p-3 rounded-xl border border-border shadow-md space-y-2 cursor-pointer hover:border-primary transition-all"
+                  className="meeting-stage-dark p-3 rounded-xl border border-primary/40 shadow-md space-y-2 cursor-pointer hover:border-primary transition-all group"
                 >
                   <div className="flex items-center justify-between text-[11px] font-semibold text-white">
                     <div className="flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
-                      <span>Live SFU Meeting Stage</span>
+                      <span className="w-2 h-2 rounded-full bg-destructive animate-ping" />
+                      <span className="text-emerald-400 font-bold">Live Stage Active</span>
                     </div>
-                    <span className="text-[10px] text-gray-400">Join Stage</span>
+                    <span className="text-[10px] bg-primary text-white font-bold px-2 py-0.5 rounded-md group-hover:opacity-90 transition-opacity">
+                      Join Stage
+                    </span>
                   </div>
                   <div className="aspect-video bg-neutral-900 rounded-lg flex items-center justify-center border border-neutral-800 relative overflow-hidden">
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-2">
-                      <span className="text-[10px] text-white font-medium">{profile?.fullName || "Chitrarth Rai (Host)"}</span>
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent flex flex-col justify-end p-2.5">
+                      <span className="text-xs text-white font-bold truncate">
+                        {activeMeetingTitle || `${selectedChat} Live Sync`}
+                      </span>
+                      <span className="text-[10px] text-gray-300 font-mono">
+                        Room: {activeMeetingCode}
+                      </span>
                     </div>
                   </div>
                 </div>
