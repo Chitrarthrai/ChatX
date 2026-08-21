@@ -110,26 +110,36 @@ export function SiteTour({ onComplete }: SiteTourProps) {
     setIsOpen(true);
   };
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        finishTour();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen]);
+
   if (!mounted) return null;
 
   if (!isOpen) {
-    return (
-      <button
-        onClick={restartTour}
-        className="fixed bottom-4 right-4 z-40 bg-card border border-border text-foreground hover:bg-secondary p-2.5 rounded-full shadow-lg flex items-center gap-2 text-xs font-semibold transition-all group"
-        title="Take Site Tour"
-      >
-        <HelpCircle className="w-4 h-4 text-primary group-hover:scale-110 transition-transform" />
-        <span className="hidden sm:inline">Product Tour</span>
-      </button>
-    );
+    return null; // Do not block UI with intrusive floating buttons unless requested
   }
 
   const step = TOUR_STEPS[currentStep];
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-card text-card-foreground border border-border w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) finishTour();
+      }}
+      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 cursor-pointer"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-card text-card-foreground border border-border w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 cursor-default"
+      >
         {/* Header */}
         <div className="p-6 border-b border-border flex items-center justify-between">
           <div className="flex items-center gap-2">

@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
-import { getProfile } from "@/services/profile";
+import { getProfile, setPresenceStatus } from "@/services/profile";
 import type { UserProfile } from "@chatx/types";
 
 interface AuthContextType {
@@ -55,6 +55,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (p) {
         setProfile(p);
       }
+      // Broadcast online status to database and connected teammates
+      setPresenceStatus(userId, "online").catch(() => {});
     } catch (err) {
       console.error("Failed to load profile:", err);
     }

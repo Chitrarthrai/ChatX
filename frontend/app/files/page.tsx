@@ -21,8 +21,10 @@ import {
   Filter,
   Loader2,
   FolderPlus,
-  Plus
+  Plus,
+  Sliders,
 } from "lucide-react";
+import { StorageManagementDialog } from "@/components/storage/storage-management-dialog";
 
 interface FileItem {
   id: string;
@@ -57,6 +59,7 @@ export default function FilesPage() {
   ]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [isStorageOpen, setIsStorageOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -268,6 +271,16 @@ This file was retrieved from ChatX Enterprise File Storage.`;
 
         <div className="flex items-center gap-3">
           <button
+            type="button"
+            onClick={() => setIsStorageOpen(true)}
+            className="bg-secondary hover:bg-secondary/80 border border-border text-foreground text-xs font-semibold px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-sm"
+            title="Manage Storage & Local Cache"
+          >
+            <Sliders className="w-3.5 h-3.5 text-cyan-500" />
+            <span>Manage Cache</span>
+          </button>
+
+          <button
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
             className="bg-primary text-primary-foreground text-xs font-semibold px-4 py-2 rounded-xl hover:opacity-90 transition-all flex items-center gap-2 shadow-sm disabled:opacity-50"
@@ -431,6 +444,12 @@ This file was retrieved from ChatX Enterprise File Storage.`;
           </div>
         )}
       </div>
+
+      {/* Telegram-Style Storage & Cache Management Modal */}
+      <StorageManagementDialog
+        isOpen={isStorageOpen}
+        onClose={() => setIsStorageOpen(false)}
+      />
     </div>
   );
 }

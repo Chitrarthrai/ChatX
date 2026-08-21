@@ -897,28 +897,49 @@ function createPresentationCanvasStream(title: string, presenter: string): Media
         const payload = data?.payload ?? data;
         if (payload && payload.instanceId && payload.instanceId !== myInstanceIdRef.current) {
           const instId = payload.instanceId;
+          const uId = payload.userId;
+          const cleanName = (payload.name || payload.email || "Participant").replace(/\s*\(You\)$/i, "");
           setParticipants((prev) => {
-            if (prev.some((p) => p.id === instId)) return prev;
-            return [
-              ...prev,
-              {
-                id: instId,
-                userId: payload.userId || instId,
-                name: payload.name || payload.email || "Participant",
-                email: payload.email || "",
-                role: payload.isHost ? "Host" : "Participant",
-                isHost: payload.isHost,
-                isMuted: !!payload.isMuted,
-                isVideoOff: !!payload.isVideoOff,
-                isHandRaised: !!payload.isHandRaised,
-                isScreenSharing: !!payload.isScreenSharing,
-                isSpeaking: false,
-                joinedAt: payload.joinedAt,
-              },
-            ];
+            const localTile = prev.find((p) => p.id === myInstanceIdRef.current) || {
+              id: myInstanceIdRef.current,
+              userId: effectiveUserIdRef.current,
+              name: `${effectiveUserNameRef.current} (You)`,
+              email: effectiveUserEmailRef.current,
+              role: isHostRef.current ? "Host" : "Participant",
+              isHost: isHostRef.current,
+              isMuted: isMutedRef.current,
+              isVideoOff: isVideoOffRef.current,
+              isHandRaised: isHandRaisedRef.current,
+              isSpeaking: false,
+            };
+
+            const remotePeers = prev.filter((p) => p.id !== myInstanceIdRef.current);
+            const existingIdx = remotePeers.findIndex((p) => p.id === instId);
+            const peerItem: ParticipantItem = {
+              id: instId,
+              userId: uId || instId,
+              name: cleanName,
+              email: payload.email || "",
+              role: payload.isHost ? "Host" : "Participant",
+              isHost: payload.isHost,
+              isMuted: !!payload.isMuted,
+              isVideoOff: !!payload.isVideoOff,
+              isHandRaised: !!payload.isHandRaised,
+              isScreenSharing: !!payload.isScreenSharing,
+              isSpeaking: false,
+              joinedAt: payload.joinedAt,
+            };
+
+            if (existingIdx >= 0) {
+              remotePeers[existingIdx] = { ...remotePeers[existingIdx], ...peerItem };
+            } else {
+              remotePeers.push(peerItem);
+            }
+
+            return [localTile, ...remotePeers];
           });
 
-          // Reply with our own announcement
+          // Reply with our own announcement immediately
           channel.send({
             type: "broadcast",
             event: "peer_announce",
@@ -936,7 +957,7 @@ function createPresentationCanvasStream(title: string, presenter: string): Media
             },
           });
 
-          // If currently screen sharing, inform newcomer
+          // If currently screen sharing, inform newcomer immediately
           if (isScreenSharingRef.current) {
             channel.send({
               type: "broadcast",
@@ -945,7 +966,7 @@ function createPresentationCanvasStream(title: string, presenter: string): Media
             });
           }
 
-          // Initiate WebRTC connection
+          // Initiate WebRTC connection immediately
           getOrCreatePeerConnection(instId, true);
         }
       })
@@ -955,37 +976,58 @@ function createPresentationCanvasStream(title: string, presenter: string): Media
         const payload = data?.payload ?? data;
         if (payload && payload.instanceId && payload.instanceId !== myInstanceIdRef.current) {
           const instId = payload.instanceId;
+          const uId = payload.userId;
+          const cleanName = (payload.name || payload.email || "Participant").replace(/\s*\(You\)$/i, "");
           setParticipants((prev) => {
-            if (prev.some((p) => p.id === instId)) return prev;
-            return [
-              ...prev,
-              {
-                id: instId,
-                userId: payload.userId || instId,
-                name: payload.name || payload.email || "Participant",
-                email: payload.email || "",
-                role: payload.isHost ? "Host" : "Participant",
-                isHost: payload.isHost,
-                isMuted: !!payload.isMuted,
-                isVideoOff: !!payload.isVideoOff,
-                isHandRaised: !!payload.isHandRaised,
-                isScreenSharing: !!payload.isScreenSharing,
-                isSpeaking: false,
-                joinedAt: payload.joinedAt,
-              },
-            ];
+            const localTile = prev.find((p) => p.id === myInstanceIdRef.current) || {
+              id: myInstanceIdRef.current,
+              userId: effectiveUserIdRef.current,
+              name: `${effectiveUserNameRef.current} (You)`,
+              email: effectiveUserEmailRef.current,
+              role: isHostRef.current ? "Host" : "Participant",
+              isHost: isHostRef.current,
+              isMuted: isMutedRef.current,
+              isVideoOff: isVideoOffRef.current,
+              isHandRaised: isHandRaisedRef.current,
+              isSpeaking: false,
+            };
+
+            const remotePeers = prev.filter((p) => p.id !== myInstanceIdRef.current);
+            const existingIdx = remotePeers.findIndex((p) => p.id === instId);
+            const peerItem: ParticipantItem = {
+              id: instId,
+              userId: uId || instId,
+              name: cleanName,
+              email: payload.email || "",
+              role: payload.isHost ? "Host" : "Participant",
+              isHost: payload.isHost,
+              isMuted: !!payload.isMuted,
+              isVideoOff: !!payload.isVideoOff,
+              isHandRaised: !!payload.isHandRaised,
+              isScreenSharing: !!payload.isScreenSharing,
+              isSpeaking: false,
+              joinedAt: payload.joinedAt,
+            };
+
+            if (existingIdx >= 0) {
+              remotePeers[existingIdx] = { ...remotePeers[existingIdx], ...peerItem };
+            } else {
+              remotePeers.push(peerItem);
+            }
+
+            return [localTile, ...remotePeers];
           });
 
           if (payload.isScreenSharing) {
-            setRemotePresenter({ instanceId: payload.instanceId, userName: payload.name || "Presenter" });
+            setRemotePresenter({ instanceId: payload.instanceId, userName: cleanName });
           }
         }
       })
 
-      // C. Direct Broadcast: Peer Leave
+      // C. Direct Broadcast: Peer Leave (Instant removal across all clients)
       .on("broadcast", { event: "peer_leave" }, (data: any) => {
         const payload = data?.payload ?? data;
-        if (payload && payload.instanceId) {
+        if (payload && payload.instanceId && payload.instanceId !== myInstanceIdRef.current) {
           const instId = payload.instanceId;
           const pc = peerConnectionsRef.current.get(instId);
           if (pc) {
@@ -997,12 +1039,17 @@ function createPresentationCanvasStream(title: string, presenter: string): Media
             delete updated[instId];
             return updated;
           });
-          setParticipants((prev) => prev.filter((p) => p.id !== instId));
+          setParticipants((prev) => prev.filter((p) => p.id === myInstanceIdRef.current || p.id !== instId));
           setRemotePresenter((prev) => (prev?.instanceId === instId ? null : prev));
         }
       })
 
-      // D. Realtime Presence Sync
+      // D. Meeting Ended by Host Broadcast
+      .on("broadcast", { event: "meeting_ended" }, () => {
+        onClose();
+      })
+
+      // E. Realtime Presence Sync
       .on("presence", { event: "sync" }, () => {
         syncPresenceParticipants();
       })
@@ -1022,7 +1069,7 @@ function createPresentationCanvasStream(title: string, presenter: string): Media
         if (leftPresences && Array.isArray(leftPresences)) {
           leftPresences.forEach((lp: any) => {
             const instId = lp.instanceId;
-            if (instId) {
+            if (instId && instId !== myInstanceIdRef.current) {
               const pc = peerConnectionsRef.current.get(instId);
               if (pc) {
                 pc.close();
@@ -1033,6 +1080,7 @@ function createPresentationCanvasStream(title: string, presenter: string): Media
                 delete updated[instId];
                 return updated;
               });
+              setParticipants((prev) => prev.filter((p) => p.id === myInstanceIdRef.current || p.id !== instId));
             }
           });
         }
@@ -1592,6 +1640,67 @@ function createPresentationCanvasStream(title: string, presenter: string): Media
     }, 1000);
   };
 
+  // Graceful Instant Meeting Exit & Call Teardown
+  const handleLeaveMeeting = async (endForAll = false) => {
+    // 1. If user was screen sharing, stop sharing immediately
+    if (isScreenSharingRef.current) {
+      handleStopScreenShare();
+    }
+
+    // 2. Broadcast peer_leave and untrack presence immediately BEFORE closing
+    if (channelRef.current) {
+      try {
+        await channelRef.current.send({
+          type: "broadcast",
+          event: "peer_leave",
+          payload: {
+            instanceId: myInstanceIdRef.current,
+            userId: effectiveUserIdRef.current,
+          },
+        });
+        await channelRef.current.untrack();
+      } catch {}
+    }
+
+    // 3. Stop all local media stream tracks
+    if (localMediaStreamRef.current) {
+      localMediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      localMediaStreamRef.current = null;
+    }
+    if (screenMediaStreamRef.current) {
+      screenMediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      screenMediaStreamRef.current = null;
+    }
+
+    // 4. Close WebRTC peer connections
+    peerConnectionsRef.current.forEach((pc) => pc.close());
+    peerConnectionsRef.current.clear();
+
+    // 5. If Host ends meeting for everyone
+    if (isHostRef.current && endForAll) {
+      const supabase = createClient();
+      supabase
+        .from("meetings")
+        .update({
+          status: "ended",
+          description: JSON.stringify({ isScreenSharing: false, isEnded: true }),
+        })
+        .eq("meeting_code", meetingCode)
+        .then(() => {});
+
+      if (channelRef.current) {
+        channelRef.current.send({
+          type: "broadcast",
+          event: "meeting_ended",
+          payload: { meetingCode },
+        });
+      }
+    }
+
+    // 6. Exit Stage Modal
+    onClose();
+  };
+
   if (!isOpen) return null;
 
   // Active Presentation Stream (local or remote presenter)
@@ -1682,9 +1791,9 @@ function createPresentationCanvasStream(title: string, presenter: string): Media
           {/* Close/Minimize Stage */}
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => handleLeaveMeeting(false)}
             className="p-2 text-gray-400 hover:text-white hover:bg-neutral-800 hover:border-neutral-700 border border-transparent rounded-xl transition-all cursor-pointer"
-            title="Minimize / Close Stage"
+            title="Leave / Exit Stage"
           >
             <X className="w-4 h-4" />
           </button>
@@ -2432,12 +2541,12 @@ function createPresentationCanvasStream(title: string, presenter: string): Media
         {/* 10. Leave / End Call */}
         <button
           type="button"
-          onClick={onClose}
+          onClick={() => handleLeaveMeeting(false)}
           className="p-3.5 bg-destructive hover:bg-destructive/90 text-white rounded-2xl font-bold px-6 flex items-center gap-2 transition-all shadow-xl shadow-destructive/30 select-none cursor-pointer"
-          title="Leave Video Call"
+          title={isHost ? "End Meeting / Leave Stage" : "Leave Video Call"}
         >
           <PhoneOff className="w-5 h-5" />
-          <span className="hidden sm:inline">Leave Stage</span>
+          <span className="hidden sm:inline">{isHost ? "End Stage" : "Leave Stage"}</span>
         </button>
       </footer>
 

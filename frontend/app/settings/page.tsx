@@ -24,8 +24,11 @@ import {
   Loader2,
   Save,
   Clock,
-  Sparkles
+  Sparkles,
+  HardDrive,
+  Sliders,
 } from "lucide-react";
+import { StorageManagementDialog } from "@/components/storage/storage-management-dialog";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -42,6 +45,7 @@ export default function SettingsPage() {
   const [readReceipts, setReadReceipts] = useState(true);
   const [saving, setSaving] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [isStorageOpen, setIsStorageOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -336,6 +340,36 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            {/* Telegram-Style Data & Storage Management */}
+            <div className="bg-card border border-border p-6 rounded-2xl space-y-4 shadow-sm">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-bold flex items-center gap-2">
+                  <HardDrive className="w-4 h-4 text-cyan-500" />
+                  <span>Data & Local Storage</span>
+                </h2>
+                <span className="text-[10px] bg-cyan-500/10 text-cyan-500 font-semibold px-2 py-0.5 rounded-full border border-cyan-500/20">
+                  Telegram-Grade
+                </span>
+              </div>
+
+              <div className="p-4 bg-secondary/30 rounded-xl border border-border/80 flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold text-foreground">Storage Usage & Cache Controls</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Inspect local media breakdown, configure auto-purge retention rules, and clear cache without losing cloud data.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsStorageOpen(true)}
+                  className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 shrink-0 shadow-sm"
+                >
+                  <Sliders className="w-3.5 h-3.5" />
+                  <span>Manage Storage</span>
+                </button>
+              </div>
+            </div>
+
             {/* Privacy & Notifications */}
             <div className="bg-card border border-border p-6 rounded-2xl space-y-4 shadow-sm">
               <h2 className="text-sm font-bold flex items-center gap-2">
@@ -390,6 +424,12 @@ export default function SettingsPage() {
           </form>
         )}
       </div>
+
+      {/* Telegram-Style Storage & Cache Management Modal */}
+      <StorageManagementDialog
+        isOpen={isStorageOpen}
+        onClose={() => setIsStorageOpen(false)}
+      />
     </div>
   );
 }

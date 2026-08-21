@@ -102,3 +102,64 @@ export async function fetchTeamChannels(teamId: string): Promise<Channel[]> {
     updatedAt: c.updated_at,
   }));
 }
+
+export async function fetchOrganizationTeams(): Promise<Team[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('teams')
+    .select('*')
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.warn('fetchOrganizationTeams error:', error.message);
+    return [];
+  }
+
+  return (data || []).map((t: any) => ({
+    id: t.id,
+    organizationId: t.organization_id,
+    name: t.name,
+    description: t.description || '',
+    isPrivate: t.is_private || false,
+    createdAt: t.created_at,
+    updatedAt: t.updated_at,
+  }));
+}
+
+export async function fetchTeamMembers(teamId: string) {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('team_members')
+    .select('*, profiles:user_id(*)')
+    .eq('team_id', teamId);
+
+  if (error) {
+    console.warn('fetchTeamMembers error:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+export async function updateTeamMemberRole(teamId: string, userId: string, role: 'admin' | 'moderator' | 'member') {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('team_members')
+    .update({ role })
+    .match({ team_id: teamId, user_id: userId })
+    .select();
+
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function removeTeamMember(teamId: string, userId: string) {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from('team_members')
+    .delete()
+    .match({ team_id: teamId, user_id: userId });
+
+  if (error) throw new Error(error.message);
+  return true;
+}
+

@@ -27,8 +27,15 @@ import {
   Users,
   Radio,
   ExternalLink,
-  BarChart2
+  BarChart2,
+  FileSpreadsheet,
+  Eye
 } from "lucide-react";
+
+import { EphemeralMediaCard, EphemeralMediaPayload } from "./ephemeral-media-card";
+import { EphemeralMediaViewer } from "./ephemeral-media-viewer";
+import { PermanentDocumentViewer } from "./permanent-document-viewer";
+import { saveLocalMediaBlob } from "@/services/storage-manager";
 
 export interface MessageReactionItem {
   emoji: string;
@@ -67,8 +74,18 @@ export interface PollPayload {
   creatorName?: string;
 }
 
-function parsePollMessage(content: string): PollPayload | null {
-  if (!content.includes("POLL_DATA:")) return null;
+function parseEphemeralMediaMessage(content?: string): EphemeralMediaPayload | null {
+  if (!content || typeof content !== "string" || !content.includes("EPHEMERAL_MEDIA_DATA:")) return null;
+  try {
+    const raw = content.split("EPHEMERAL_MEDIA_DATA:")[1];
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function parsePollMessage(content?: string): PollPayload | null {
+  if (!content || typeof content !== "string" || !content.includes("POLL_DATA:")) return null;
   try {
     const raw = content.split("POLL_DATA:")[1];
     return JSON.parse(raw);
@@ -77,7 +94,8 @@ function parsePollMessage(content: string): PollPayload | null {
   }
 }
 
-function parseMeetingMessage(content: string) {
+function parseMeetingMessage(content?: string) {
+  if (!content || typeof content !== "string") return null;
   const isMeeting =
     content.includes("Scheduled Video Meeting") ||
     content.includes("Meeting Invites Updated") ||
@@ -155,6 +173,24 @@ export function MessageItem({
 
   const meetingData = parseMeetingMessage(message.content);
   const pollData = parsePollMessage(message.content);
+  const ephemeralData = parseEphemeralMediaMessage(message.content);
+  const [showEphemeralViewer, setShowEphemeralViewer] = useState(false);
+  const [showPermanentViewer, setShowPermanentViewer] = useState(false);
+
+  const handleExpireEphemeral = () => {
+    if (!ephemeralData || !onEditMessage) return;
+    const updatedViewers = currentUserId
+      ? Array.from(new Set([...(ephemeralData.viewedBy || []), currentUserId]))
+      : ephemeralData.viewedBy || [];
+
+    const updatedPayload: EphemeralMediaPayload = {
+      ...ephemeralData,
+      viewedBy: updatedViewers,
+      isExpired: true,
+    };
+
+    onEditMessage(message.id, `EPHEMERAL_MEDIA_DATA:${JSON.stringify(updatedPayload)}`);
+  };
 
   const handleVotePoll = (optionId: string) => {
     if (!pollData || !currentUserId || !onEditMessage) return;
@@ -221,7 +257,41 @@ export function MessageItem({
     setIsEditing(false);
   };
 
-  const handleDownloadAttachment = (fileName: string) => {
+  const handleDownloadAttachment = async (fileName: string) => {
+    if (detectedFileUrl) {
+      try {
+        const response = await fetch(detectedFileUrl);
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+
+        // Cache downloaded blob locally in IndexedDB media vault
+        const isImg = fileName.toLowerCase().endsWith(".png") || fileName.toLowerCase().endsWith(".jpg");
+        const isVid = fileName.toLowerCase().endsWith(".mp4") || fileName.toLowerCase().endsWith(".mov");
+        const isAud = fileName.toLowerCase().endsWith(".mp3") || fileName.toLowerCase().endsWith(".webm");
+        saveLocalMediaBlob({
+          id: `downloaded-${Date.now()}-${fileName}`,
+          name: fileName,
+          category: isVid ? "videos" : isImg ? "photos" : isAud ? "audio" : "documents",
+          mimeType: blob.type || "application/octet-stream",
+          sizeBytes: blob.size,
+          chatName: "Architecture & Engineering",
+          blob: blob,
+          url: detectedFileUrl,
+        }).catch(() => {});
+
+        return;
+      } catch (err) {
+        console.warn("Direct blob download notice:", err);
+      }
+    }
+
     const isImg = fileName.toLowerCase().endsWith(".png") || fileName.toLowerCase().endsWith(".jpg");
     const content = `ChatX Workspace File Artifact
 Filename: ${fileName}
@@ -231,7 +301,7 @@ Timestamp: ${new Date().toISOString()}
 --- ATTACHMENT CONTENT ---
 Verified monorepo artifact bundle for ChatX collaboration platform.`;
 
-    const blob = new Blob([content], { type: isImg ? "image/png" : "application/pdf" });
+    const blob = new Blob([content], { type: isImg ? "image/png" : "application/octet-stream" });
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = blobUrl;
@@ -239,27 +309,50 @@ Verified monorepo artifact bundle for ChatX collaboration platform.`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
   };
+
+
 
   const senderName = message.sender?.fullName || message.sender?.username || "User";
   const formattedTime = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const safeContent = message.content || "";
 
   const hasFileRef =
     message.type === "document" ||
     message.type === "image" ||
-    message.content.includes(".pdf") ||
-    message.content.includes(".png") ||
-    message.content.includes(".jpg") ||
-    message.content.includes("Attached File");
+    message.type === "video" ||
+    safeContent.includes(".pdf") ||
+    safeContent.includes(".png") ||
+    safeContent.includes(".jpg") ||
+    safeContent.includes(".docx") ||
+    safeContent.includes(".xlsx") ||
+    safeContent.includes("Attached File");
 
   let detectedFileName = "attachment.pdf";
-  if (message.content.includes("ChatX_Architecture_v2.pdf")) detectedFileName = "ChatX_Architecture_v2.pdf";
-  else if (message.content.includes("UI_Component_Tokens.png")) detectedFileName = "UI_Component_Tokens.png";
-  else if (message.content.includes("Attached File:")) {
-    const match = message.content.match(/Attached File:\s*([^\s(]+)/);
-    if (match && match[1]) detectedFileName = match[1];
+  let detectedFileSize = "1.5 MB";
+  let detectedFileUrl = "";
+
+  if (safeContent.includes("ATTACHMENT_URL:")) {
+    const urlMatch = safeContent.match(/ATTACHMENT_URL:([^\s\n]+)/);
+    if (urlMatch && urlMatch[1]) detectedFileUrl = urlMatch[1];
   }
+
+  if (safeContent.includes("ChatX_Architecture_v2.pdf")) {
+    detectedFileName = "ChatX_Architecture_v2.pdf";
+    detectedFileSize = "2.4 MB";
+  } else if (safeContent.includes("UI_Component_Tokens.png")) {
+    detectedFileName = "UI_Component_Tokens.png";
+    detectedFileSize = "1.8 MB";
+  } else if (safeContent.includes("Attached File:")) {
+    const match = safeContent.match(/Attached File:\s*([^\s\[(]+)/);
+    if (match && match[1]) detectedFileName = match[1];
+    const sizeMatch = safeContent.match(/[\[\(]([\d.]+\s*[KMGT]?B)[\]\)]/i);
+    if (sizeMatch && sizeMatch[1]) detectedFileSize = sizeMatch[1];
+  }
+
+  const cleanDisplayContent = safeContent.replace(/\n?ATTACHMENT_URL:[^\s\n]+/g, "").trim();
+
 
   return (
     <div className={`relative group flex items-start gap-3 ${isSelf ? "flex-row-reverse" : ""}`}>
@@ -322,6 +415,31 @@ Verified monorepo artifact bundle for ChatX collaboration platform.`;
               </button>
             </div>
           </form>
+        ) : ephemeralData ? (
+          /* Ephemeral Disappearing Media / View Once Widget */
+          <>
+            <EphemeralMediaCard
+              payload={ephemeralData}
+              isSelf={isSelf}
+              currentUserId={currentUserId}
+              onOpenViewer={() => setShowEphemeralViewer(true)}
+            />
+            {showEphemeralViewer && (
+              <EphemeralMediaViewer
+                isOpen={showEphemeralViewer}
+                onClose={() => setShowEphemeralViewer(false)}
+                mediaUrl={ephemeralData.url}
+                mediaType={ephemeralData.mediaType}
+                fileName={ephemeralData.fileName}
+                fileSize={ephemeralData.fileSize}
+                viewMode={ephemeralData.viewMode}
+                timerSeconds={ephemeralData.timerSeconds}
+                caption={ephemeralData.caption}
+                senderName={senderName}
+                onExpire={handleExpireEphemeral}
+              />
+            )}
+          </>
         ) : pollData ? (
           /* Interactive Channel Poll Widget */
           <div className="mt-1 rounded-2xl bg-card border border-border shadow-md overflow-hidden text-foreground w-full max-w-lg text-left">
@@ -487,7 +605,7 @@ Verified monorepo artifact bundle for ChatX collaboration platform.`;
             }`}
             title="Double-click to quick-react ❤️"
           >
-            {message.content}
+            <div className="whitespace-pre-wrap">{cleanDisplayContent}</div>
 
             {hasFileRef && (
               <div className={`mt-2.5 p-2.5 rounded-lg border flex items-center justify-between gap-3 ${
@@ -495,29 +613,56 @@ Verified monorepo artifact bundle for ChatX collaboration platform.`;
                   ? "bg-primary-foreground/10 border-primary-foreground/20 text-primary-foreground"
                   : "bg-card border-border text-card-foreground"
               }`}>
-                <div className="flex items-center gap-2.5 truncate">
+                <div
+                  onClick={() => setShowPermanentViewer(true)}
+                  className="flex items-center gap-2.5 truncate cursor-pointer hover:opacity-90 transition-opacity"
+                  title="Click to preview document"
+                >
                   <div className={`p-1.5 rounded-md ${isSelf ? "bg-primary-foreground/20 text-primary-foreground" : "bg-primary/10 text-primary"}`}>
-                    {detectedFileName.endsWith(".png") ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
+                    {detectedFileName.endsWith(".png") || detectedFileName.endsWith(".jpg") ? (
+                      <ImageIcon className="w-4 h-4" />
+                    ) : detectedFileName.match(/\.(xlsx|xls|csv)$/i) ? (
+                      <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                    ) : (
+                      <FileText className="w-4 h-4" />
+                    )}
                   </div>
                   <div className="flex flex-col truncate text-left">
                     <span className="font-semibold text-xs truncate">{detectedFileName}</span>
                     <span className="text-[10px] opacity-80">
-                      {detectedFileName.endsWith(".pdf") ? "2.4 MB • PDF Document" : "1.8 MB • PNG Asset"}
+                      {detectedFileSize} • {detectedFileName.split('.').pop()?.toUpperCase() || "File"} Document
                     </span>
                   </div>
                 </div>
-                <button
-                  onClick={() => handleDownloadAttachment(detectedFileName)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all shrink-0 shadow-sm ${
-                    isSelf
-                      ? "bg-white text-primary hover:bg-white/90"
-                      : "bg-primary text-primary-foreground hover:opacity-90"
-                  }`}
-                  title={`Download ${detectedFileName}`}
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Download</span>
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowPermanentViewer(true)}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-semibold transition-all shrink-0 shadow-xs cursor-pointer ${
+                      isSelf
+                        ? "bg-white/20 text-white hover:bg-white/30"
+                        : "bg-secondary text-foreground hover:bg-secondary/80 border border-border"
+                    }`}
+                    title={`Preview ${detectedFileName}`}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Preview</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadAttachment(detectedFileName)}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-semibold transition-all shrink-0 shadow-sm cursor-pointer ${
+                      isSelf
+                        ? "bg-white text-primary hover:bg-white/90"
+                        : "bg-primary text-primary-foreground hover:opacity-90"
+                    }`}
+                    title={`Download ${detectedFileName}`}
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download</span>
+                  </button>
+                </div>
               </div>
             )}
 
@@ -662,6 +807,17 @@ Verified monorepo artifact bundle for ChatX collaboration platform.`;
         messageContent={message.content}
         onClose={() => setShowForwardDialog(false)}
         onForward={(target) => console.log(`Forwarded to ${target}`)}
+      />
+
+      {/* Permanent Document & Media Viewer Modal with Zoom, Print, Download, Page Selection */}
+      <PermanentDocumentViewer
+        isOpen={showPermanentViewer}
+        onClose={() => setShowPermanentViewer(false)}
+        mediaUrl={detectedFileUrl || (detectedFileName.endsWith(".pdf") ? "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+ZW5kb2JqCjIgMCBvYmo8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PmVuZG9iagozIDAgb2JqPDwvVHlwZS9QYWdlL1BhcmVudCAyIDAgUi9SZXNvdXJjZXM8PC9Gb250PDwvRjE8PC9UeXBlL0ZvbnQvU3VidHlwZS9UeXBlMS9CYXNlRm9udC9IZWx2ZXRpY2E+Pj4+Pj4vTWVkaWFCb3hbMCAwIDYxMiA3OTJdL0NvbnRlbnRzIDQgMCBSPj5lbmRvYmoKNCAwIG9iajw8L0xlbmd0aCA4MD4+c3RyZWFtCkJUCi9GMSAxNCBUZgoxMDAgNzAwIFRkCihDSEFUWCAtIFBFUk1BTkVOVCBET0NVTUVOVCBWRVJJRklFRCkgVGoKRVQKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNQowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyNzggMDAwMDAgbiAKdHJhaWxlcjw8L1Jvb3QgMSAwIFIvU2l6ZSA1Pj4Kc3RhcnR4cmVmCjQwOQolJUVPRg==" : "")}
+        mediaType={detectedFileName.endsWith(".png") || detectedFileName.endsWith(".jpg") ? "image" : detectedFileName.endsWith(".mp4") ? "video" : "document"}
+        fileName={detectedFileName}
+        fileSize={detectedFileSize}
+        senderName={senderName}
       />
     </div>
   );

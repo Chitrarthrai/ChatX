@@ -103,24 +103,35 @@ export async function createChannel(name: string, topic: string, type: ChannelTy
 export async function fetchDirectMessageContacts(currentUserId?: string): Promise<UserDirectoryItem[]> {
   try {
     const filter = currentUserId ? `&id=neq.${currentUserId}` : '';
-    let profiles: any = await supabaseRestFetch(`profiles?select=id,full_name,username,email,status&order=created_at.desc&limit=50${filter}`);
+    let profiles: any = await supabaseRestFetch(`profiles?select=id,full_name,username,email,status,last_seen&order=created_at.desc&limit=50${filter}`);
     if (!profiles) {
       const supabase = createClient();
-      let query = supabase.from('profiles').select('id, full_name, username, email, status').order('created_at', { ascending: false }).limit(50);
+      let query = supabase.from('profiles').select('id, full_name, username, email, status, last_seen').order('created_at', { ascending: false }).limit(50);
       if (currentUserId) query = query.neq('id', currentUserId);
       const res = await query;
       profiles = res.data;
     }
     if (!profiles || !Array.isArray(profiles)) return [];
 
-    return profiles.map((p: any) => ({
-      id: p.id,
-      name: p.full_name || p.username || p.email || 'Team Member',
-      username: p.username || 'user',
-      email: p.email || '',
-      role: 'Member',
-      status: (p.status as UserDirectoryItem['status']) || 'offline',
-    }));
+    return profiles.map((p: any) => {
+      let resolvedStatus: UserDirectoryItem['status'] = (p.status as UserDirectoryItem['status']) || 'online';
+      if (p.status === 'dnd') {
+        resolvedStatus = 'dnd';
+      } else if (p.status === 'offline') {
+        resolvedStatus = 'offline';
+      } else {
+        resolvedStatus = 'online';
+      }
+
+      return {
+        id: p.id,
+        name: p.full_name || p.username || p.email || 'Team Member',
+        username: p.username || 'user',
+        email: p.email || '',
+        role: 'Member',
+        status: resolvedStatus,
+      };
+    });
   } catch (err: any) {
     console.warn("fetchDirectMessageContacts catch:", err.message);
     return [];

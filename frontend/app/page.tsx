@@ -5,6 +5,7 @@ import { useTheme } from "next-themes";
 import { useAuth } from "@/components/auth-provider";
 import { AuthDialog } from "@/components/auth/auth-dialog";
 import { ChannelDialog } from "@/components/teams/channel-dialog";
+import { GroupDetailsDialog } from "@/components/teams/group-details-dialog";
 import { ProfileDialog } from "@/components/profile/profile-dialog";
 import { PollDialog } from "@/components/chat/poll-dialog";
 import { LockDialog } from "@/components/chat/lock-dialog";
@@ -80,13 +81,25 @@ import {
   Shield,
   Maximize2,
   Archive,
-  RotateCcw
+  RotateCcw,
+  Info,
+  Eye,
+  Flame,
+  Play,
+  Sliders
 } from "lucide-react";
 import { LandingPage } from "@/components/landing-page";
 import { SiteTour } from "@/components/site-tour";
 import { DeviceSettingsDialog } from "@/components/meetings/device-settings-dialog";
 import { VideoMeetingStage } from "@/components/meetings/video-meeting-stage";
+import { EphemeralUploadModal } from "@/components/chat/ephemeral-upload-modal";
+import type { EphemeralMediaPayload } from "@/components/chat/ephemeral-media-card";
+import { compressMediaForEphemeral } from "@/services/media-compression";
+import { MultiAttachmentPreview } from "@/components/chat/multi-attachment-preview";
+import { MediaPreviewDialog } from "@/components/chat/media-preview-dialog";
 import { TypingIndicator } from "@/components/chat/typing-indicator";
+import { StorageManagementDialog } from "@/components/storage/storage-management-dialog";
+import { saveLocalMediaBlob } from "@/services/storage-manager";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -105,10 +118,18 @@ export default function DashboardPage() {
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isGroupDetailsOpen, setIsGroupDetailsOpen] = useState(false);
   const [isCreateChannelOpen, setIsCreateChannelOpen] = useState(false);
   const [isPollOpen, setIsPollOpen] = useState(false);
-  const [isLockOpen, setIsLockOpen] = useState(false);
   const [isScheduleChatOpen, setIsScheduleChatOpen] = useState(false);
+  const [ephemeralModalFile, setEphemeralModalFile] = useState<File | null>(null);
+  const [isEphemeralModalOpen, setIsEphemeralModalOpen] = useState(false);
+  const [isMediaPreviewOpen, setIsMediaPreviewOpen] = useState(false);
+  const [isStorageOpen, setIsStorageOpen] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [ephemeralMode, setEphemeralMode] = useState<"normal" | "view_once" | "timer">("normal");
+  const [ephemeralTimerSeconds, setEphemeralTimerSeconds] = useState<number>(10);
+  const [isLockOpen, setIsLockOpen] = useState(false);
   const [lockedChats, setLockedChats] = useState<Record<string, string>>({});
   const [unlockedChats, setUnlockedChats] = useState<string[]>([]);
   const [enteredPin, setEnteredPin] = useState("");
@@ -124,6 +145,7 @@ export default function DashboardPage() {
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [activeThreadMessage, setActiveThreadMessage] = useState<Message | null>(null);
   const [isMeetingActive, setIsMeetingActive] = useState(false);
+  const [isMeetingHost, setIsMeetingHost] = useState(false);
   const [activeMeetingTitle, setActiveMeetingTitle] = useState("ChatX SFU Architecture & Engineering Sync");
   const [activeMeetingCode, setActiveMeetingCode] = useState("chatx-qzx94i");
   const [isMuted, setIsMuted] = useState(false);
@@ -139,6 +161,7 @@ export default function DashboardPage() {
     if (meetingCodeParam) {
       setActiveMeetingCode(meetingCodeParam);
       setActiveMeetingTitle(`Live Meeting Session #${meetingCodeParam}`);
+      setIsMeetingHost(false);
       setIsMeetingActive(true);
     }
   }, [meetingCodeParam]);
@@ -324,7 +347,42 @@ export default function DashboardPage() {
     const timer = setTimeout(() => {
       loadWorkspaceData();
     }, 400);
-    return () => clearTimeout(timer);
+
+    // Realtime Profile Presence Synchronization
+    const supabase = createClient();
+    const channel = supabase
+      .channel("realtime:profiles_presence")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "profiles" },
+        (payload) => {
+          const updated = payload.new as any;
+          if (updated && updated.id) {
+            setDirectMessages((prev) =>
+              prev.map((dm) =>
+                dm.id === updated.id
+                  ? {
+                      ...dm,
+                      status: updated.status === "dnd" ? "dnd" : updated.status === "offline" ? "offline" : "online",
+                      name: updated.full_name || dm.name,
+                    }
+                  : dm
+              )
+            );
+          }
+        }
+      )
+      .subscribe();
+
+    const interval = setInterval(() => {
+      loadWorkspaceData();
+    }, 10000);
+
+    return () => {
+      clearTimeout(timer);
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
   }, [viewMode, user, profile, mounted]);
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -798,7 +856,32 @@ export default function DashboardPage() {
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     const contentText = messageInput.trim();
-    if (!contentText) return;
+    if (!contentText && attachedFiles.length === 0) return;
+
+    if (attachedFiles.length > 0) {
+      const filesToSend = [...attachedFiles];
+      const modeToSend = ephemeralMode;
+      const timerToSend = ephemeralTimerSeconds;
+      const captionText = contentText;
+
+      setAttachedFiles([]);
+      setMessageInput("");
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(`chatx_draft_${selectedChat}`);
+      }
+
+      for (let i = 0; i < filesToSend.length; i++) {
+        const file = filesToSend[i];
+        const itemCaption = i === 0 ? captionText : "";
+        await handleSendEphemeralMedia({
+          file,
+          viewMode: modeToSend,
+          timerSeconds: timerToSend,
+          caption: itemCaption,
+        });
+      }
+      return;
+    }
 
     setMessageInput("");
     if (typeof window !== "undefined") {
@@ -867,81 +950,212 @@ export default function DashboardPage() {
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
+
+    const newFiles = Array.from(fileList);
+    setAttachedFiles((prev) => [...prev, ...newFiles]);
+    setEphemeralMode("normal");
+    setIsMediaPreviewOpen(true);
 
     if (e.target) {
       e.target.value = "";
     }
+  };
 
-    const senderUserId = user?.id || profile?.id;
+  const handleRemoveAttachedFile = (index: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleCycleTimerSeconds = () => {
+    setEphemeralTimerSeconds((prev) => (prev === 5 ? 10 : prev === 10 ? 30 : prev === 30 ? 60 : 5));
+  };
+
+  const handleSendEphemeralMedia = async (data: {
+    file: File;
+    viewMode: "normal" | "view_once" | "timer";
+    timerSeconds: number;
+    caption: string;
+  }) => {
+    const { file, viewMode, timerSeconds, caption } = data;
+    const senderUserId = user?.id || profile?.id || (typeof window !== "undefined" ? (() => {
+      try {
+        return JSON.parse(localStorage.getItem("chatx_active_user") || "{}")?.id;
+      } catch { return ""; }
+    })() : "");
     if (!senderUserId) return;
 
     const activeConvId = await resolveActiveConversationId();
     if (!activeConvId) return;
 
-    const mimeType = file.type || "";
-    const msgType = mimeType.startsWith("image/") ? "image" : "document";
+    const isVideo = file.type.startsWith("video/");
+    const isImage = file.type.startsWith("image/");
+    const mediaType: "image" | "video" | "document" = isVideo ? "video" : isImage ? "image" : "document";
     const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-    const contentText = `📎 Attached File: ${file.name} (${fileSizeMB} MB)`;
 
-    const attachmentMsg: Message = {
-      id: Date.now().toString(),
-      conversationId: activeConvId,
-      senderId: senderUserId,
-      content: contentText,
-      type: msgType,
-      isEdited: false,
-      isPinned: false,
-      isLocked: false,
-      status: "sent",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      sender: {
-        id: senderUserId,
-        email: user?.email || "user@chatx.platform",
-        username: profile?.username || "you",
-        fullName: profile?.fullName || user?.email || "You",
-        status: profile?.status || "online",
-        lastSeen: new Date().toISOString(),
+    if (viewMode === "normal") {
+      let publicFileUrl = "";
+      try {
+        const uploadRes = await uploadAttachment(file);
+        if (uploadRes?.url) {
+          publicFileUrl = uploadRes.url;
+        }
+      } catch (storageErr) {
+        console.warn("Storage upload notice:", storageErr);
+      }
+
+      if (!publicFileUrl) {
+        try {
+          publicFileUrl = await compressMediaForEphemeral(file);
+        } catch (e) {
+          console.warn("Permanent media data URL generation notice:", e);
+        }
+      }
+
+      const contentText = caption
+        ? `${caption}\n📎 Attached File: ${file.name} (${fileSizeMB} MB)${publicFileUrl ? `\nATTACHMENT_URL:${publicFileUrl}` : ""}`
+        : `📎 Attached File: ${file.name} (${fileSizeMB} MB)${publicFileUrl ? `\nATTACHMENT_URL:${publicFileUrl}` : ""}`;
+
+      const tempId = `opt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+      const attachmentMsg: Message = {
+        id: tempId,
+        conversationId: activeConvId,
+        senderId: senderUserId,
+        content: contentText,
+        type: isVideo ? "video" : isImage ? "image" : "document",
+        isEdited: false,
+        isPinned: false,
+        isLocked: false,
+        status: "sent",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-      },
-    };
+        sender: {
+          id: senderUserId,
+          email: user?.email || "user@chatx.platform",
+          username: profile?.username || "you",
+          fullName: profile?.fullName || user?.email || "You",
+          status: profile?.status || "online",
+          lastSeen: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      };
 
-    setMessagesByChannel((prev) => ({
-      ...prev,
-      [selectedChat]: [...(prev[selectedChat] || []), attachmentMsg],
-    }));
-    setTimeout(() => scrollToBottom(true), 50);
+      setMessagesByChannel((prev) => ({
+        ...prev,
+        [selectedChat]: [...(prev[selectedChat] || []), attachmentMsg],
+      }));
+      setTimeout(() => scrollToBottom(true), 50);
 
+      // Save real file to local device IndexedDB media vault
+      saveLocalMediaBlob({
+        id: `local-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`,
+        name: file.name,
+        category: isVideo ? "videos" : isImage ? "photos" : "documents",
+        mimeType: file.type || "application/octet-stream",
+        sizeBytes: file.size,
+        chatName: selectedChat,
+        blob: file,
+        url: publicFileUrl,
+      }).catch(() => {});
+
+      try {
+        const persistedMsg = await sendMessage(
+          { conversationId: activeConvId, content: contentText, type: isVideo ? "video" : isImage ? "image" : "document" },
+          senderUserId
+        );
+
+        if (persistedMsg && persistedMsg.id) {
+          setMessagesByChannel((prev) => {
+            const currentList = prev[selectedChat] || [];
+            const optIdx = currentList.findIndex((m) => m.id === tempId || (m.senderId === senderUserId && m.content === contentText));
+            if (optIdx >= 0) {
+              const updated = [...currentList];
+              updated[optIdx] = { ...attachmentMsg, ...persistedMsg };
+              return { ...prev, [selectedChat]: updated };
+            }
+            return prev;
+          });
+        }
+      } catch (err) {
+        console.warn("Standard upload dispatch notice:", err);
+      }
+      return;
+    }
+
+    // Ephemeral / View-Once / Timer Media dispatch
     try {
-      try {
-        await uploadAttachment(file);
-      } catch (storageErr) {
-        console.warn("Storage upload warning (proceeding with message persistence):", storageErr);
-      }
+      const dataUrl = await compressMediaForEphemeral(file);
+      if (!dataUrl) return;
 
-      try {
-        const supabase = createClient();
-        await supabase.from("files").insert({
-          uploader_id: senderUserId,
-          name: file.name,
-          size: file.size,
-          mime_type: mimeType || "application/octet-stream",
-          folder_name: "Chat Attachments",
-        });
-      } catch (fileErr) {
-        console.warn("Files DB insert warning:", fileErr);
-      }
+      const payload: EphemeralMediaPayload = {
+        type: "ephemeral_media",
+        id: `eph-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        mediaType: mediaType,
+        url: dataUrl,
+        fileName: file.name,
+        fileSize: `${fileSizeMB} MB`,
+        viewMode: viewMode,
+        timerSeconds: timerSeconds,
+        viewedBy: [],
+        isExpired: false,
+        caption: caption,
+        senderId: senderUserId,
+        senderName: profile?.fullName || user?.email || "You",
+      };
 
-      await sendMessage(
-        { conversationId: activeConvId, content: contentText, type: msgType },
+      const contentText = `EPHEMERAL_MEDIA_DATA:${JSON.stringify(payload)}`;
+      const tempId = `opt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+      const ephemeralMsg: Message = {
+        id: tempId,
+        conversationId: activeConvId,
+        senderId: senderUserId,
+        content: contentText,
+        type: isVideo ? "video" : isImage ? "image" : "document",
+        isEdited: false,
+        isPinned: false,
+        isLocked: false,
+        status: "sent",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        sender: {
+          id: senderUserId,
+          email: user?.email || "user@chatx.platform",
+          username: profile?.username || "you",
+          fullName: profile?.fullName || user?.email || "You",
+          status: profile?.status || "online",
+          lastSeen: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      };
+
+      setMessagesByChannel((prev) => ({
+        ...prev,
+        [selectedChat]: [...(prev[selectedChat] || []), ephemeralMsg],
+      }));
+      setTimeout(() => scrollToBottom(true), 50);
+
+      const persisted = await sendMessage(
+        { conversationId: activeConvId, content: contentText, type: isVideo ? "video" : isImage ? "image" : "document" },
         senderUserId
       );
+
+      if (persisted && persisted.id) {
+        setMessagesByChannel((prev) => {
+          const currentList = prev[selectedChat] || [];
+          const optIdx = currentList.findIndex((m) => m.id === tempId || (m.senderId === senderUserId && m.content === contentText));
+          if (optIdx >= 0) {
+            const updated = [...currentList];
+            updated[optIdx] = { ...ephemeralMsg, ...persisted };
+            return { ...prev, [selectedChat]: updated };
+          }
+          return prev;
+        });
+      }
     } catch (err) {
-      console.warn("Error uploading file message:", err);
+      console.warn("Ephemeral message dispatch notice:", err);
     }
   };
 
@@ -1098,7 +1312,7 @@ export default function DashboardPage() {
         currentUserName={profile?.fullName || (user as any)?.user_metadata?.full_name || user?.email?.split("@")[0] || user?.email || "Chitrarth Rai"}
         currentUserId={user?.id || profile?.id}
         currentUserEmail={user?.email || profile?.email || ""}
-        isHost={true}
+        isHost={isMeetingHost}
       />
 
       {/* Primary Sidebar Navigation */}
@@ -1166,6 +1380,14 @@ export default function DashboardPage() {
               }`}
             >
               <Sparkles className="w-5 h-5" />
+            </button>
+
+            <button
+              onClick={() => setIsStorageOpen(true)}
+              title="Storage & Cache Management (Telegram-Grade)"
+              className="p-2.5 rounded-lg text-muted-foreground hover:bg-secondary hover:text-cyan-400 transition-all"
+            >
+              <Sliders className="w-5 h-5" />
             </button>
 
             <Link
@@ -1418,15 +1640,19 @@ export default function DashboardPage() {
       {/* Main Content Feed */}
       <main className="flex-1 flex flex-col bg-background relative overflow-hidden">
         <header className="h-14 border-b border-border px-6 flex items-center justify-between bg-card/30">
-          <div className="flex items-center gap-3">
+          <div
+            onClick={() => setIsGroupDetailsOpen(true)}
+            className="flex items-center gap-3 cursor-pointer group hover:opacity-85 transition-opacity"
+            title="Click to view Group Info & Administrator Settings"
+          >
             {lockedChats[selectedChat] ? (
               <Lock className="w-5 h-5 text-amber-500" />
             ) : (
-              <Hash className="w-5 h-5 text-primary" />
+              <Hash className="w-5 h-5 text-primary group-hover:scale-105 transition-transform" />
             )}
             <div>
               <h1 className="font-semibold text-sm tracking-tight text-foreground flex items-center gap-2">
-                <span>{selectedChat}</span>
+                <span className="group-hover:text-primary transition-colors">{selectedChat}</span>
                 {lockedChats[selectedChat] && (
                   <span className="text-[10px] bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded border border-amber-500/20 font-medium flex items-center gap-1">
                     <Lock className="w-2.5 h-2.5" /> PIN Protected
@@ -1438,13 +1664,20 @@ export default function DashboardPage() {
                   </span>
                 )}
               </h1>
-              <p className="text-[11px] text-muted-foreground">
-                {currentChannelInfo?.topic || "Monorepo architecture, WebRTC SFU integration, Supabase RLS policies"}
+              <p className="text-[11px] text-muted-foreground group-hover:text-foreground/80 transition-colors">
+                {currentChannelInfo?.topic || "Workspace collaboration and real-time messaging"}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsGroupDetailsOpen(true)}
+              className="p-2 text-muted-foreground hover:bg-secondary rounded-md transition-all"
+              title="Channel Details & Admin Settings"
+            >
+              <Info className="w-4 h-4 text-primary" />
+            </button>
             <button
               onClick={() => setIsLockOpen(true)}
               className="p-2 text-muted-foreground hover:bg-secondary rounded-md transition-all"
@@ -1497,6 +1730,7 @@ export default function DashboardPage() {
                 const title = `${selectedChat} Instant SFU Sync`;
                 setActiveMeetingCode(code);
                 setActiveMeetingTitle(title);
+                setIsMeetingHost(true);
                 setIsMeetingActive(true);
 
                 // Create meeting record in Supabase
@@ -1674,6 +1908,18 @@ export default function DashboardPage() {
                   </div>
                 )}
 
+                {/* Interactive Multi-Attachment Preview Strip */}
+                <MultiAttachmentPreview
+                  files={attachedFiles}
+                  onRemoveFile={handleRemoveAttachedFile}
+                  onAddMoreFiles={() => fileInputRef.current?.click()}
+                  ephemeralMode={ephemeralMode}
+                  onSetEphemeralMode={setEphemeralMode}
+                  timerSeconds={ephemeralTimerSeconds}
+                  onCycleTimerSeconds={handleCycleTimerSeconds}
+                  onClearAll={() => setAttachedFiles([])}
+                />
+
                 <textarea
                   rows={2}
                   value={messageInput}
@@ -1684,7 +1930,7 @@ export default function DashboardPage() {
                       handleSendMessage(e);
                     }
                   }}
-                  placeholder={isRecordingVoice ? "🎙️ Recording audio message..." : `Message #${selectedChat}... (Press Enter to send)`}
+                  placeholder={attachedFiles.length > 0 ? `Add a caption for ${attachedFiles.length} file${attachedFiles.length === 1 ? '' : 's'}... (optional)` : isRecordingVoice ? "🎙️ Recording audio message..." : `Message #${selectedChat}... (Press Enter to send)`}
                   className="w-full bg-transparent text-xs text-foreground placeholder:text-muted-foreground focus:outline-none resize-none"
                 />
                 <div className="flex items-center justify-between border-t border-border/50 pt-2 mt-1">
@@ -1692,18 +1938,45 @@ export default function DashboardPage() {
                     <input
                       ref={fileInputRef}
                       type="file"
+                      multiple
                       onChange={handleFileUpload}
                       className="hidden"
                     />
-                    <button type="button" onClick={() => setIsPollOpen(true)} className="p-1 hover:bg-secondary rounded text-muted-foreground" title="Create Poll"><BarChart2 className="w-4 h-4" /></button>
-                    <button type="button" onClick={() => fileInputRef.current?.click()} className="p-1 hover:bg-secondary rounded text-muted-foreground" title="Attach File"><Paperclip className="w-4 h-4" /></button>
-                    <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="p-1 hover:bg-secondary rounded text-muted-foreground" title="Add Quick Emoji"><Smile className="w-4 h-4" /></button>
+                    <button type="button" onClick={() => setIsPollOpen(true)} className="p-1 hover:bg-secondary rounded text-muted-foreground cursor-pointer" title="Create Poll"><BarChart2 className="w-4 h-4" /></button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEphemeralMode("view_once");
+                        fileInputRef.current?.click();
+                      }}
+                      className={`p-1 hover:bg-secondary rounded flex items-center gap-0.5 transition-all cursor-pointer ${
+                        attachedFiles.length > 0 && ephemeralMode === "view_once"
+                          ? "text-amber-500 bg-amber-500/10 font-bold"
+                          : "text-amber-500 hover:text-amber-400"
+                      }`}
+                      title="Attach View Once / Disappearing Media (1x)"
+                    >
+                      <Eye className="w-4 h-4" />
+                      <span className="text-[9px] font-bold">1x</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEphemeralMode("normal");
+                        fileInputRef.current?.click();
+                      }}
+                      className="p-1 hover:bg-secondary rounded text-muted-foreground cursor-pointer"
+                      title="Attach Files (Images, Videos, PDFs, Word, Excel)"
+                    >
+                      <Paperclip className="w-4 h-4" />
+                    </button>
+                    <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="p-1 hover:bg-secondary rounded text-muted-foreground cursor-pointer" title="Add Quick Emoji"><Smile className="w-4 h-4" /></button>
                     <button type="button" onClick={handleVoiceRecord} className={`p-1 rounded transition-all ${isRecordingVoice ? "bg-destructive text-white animate-pulse" : "hover:bg-secondary text-muted-foreground"}`} title="Record Voice Note"><Mic className="w-4 h-4" /></button>
                   </div>
                   <button
                     type="submit"
-                    disabled={!messageInput.trim()}
-                    className="bg-primary text-primary-foreground p-1.5 rounded-md hover:opacity-90 transition-all disabled:opacity-50"
+                    disabled={!messageInput.trim() && attachedFiles.length === 0}
+                    className="bg-primary text-primary-foreground p-1.5 rounded-md hover:opacity-90 transition-all disabled:opacity-50 cursor-pointer"
                   >
                     <Send className="w-3.5 h-3.5" />
                   </button>
@@ -1938,12 +2211,84 @@ export default function DashboardPage() {
         currentUserName={profile?.fullName || user?.email || "User"}
       />
 
+      {/* Telegram-Style Group & Channel Details Dialog with Admin Controls */}
+      <GroupDetailsDialog
+        isOpen={isGroupDetailsOpen}
+        onClose={() => setIsGroupDetailsOpen(false)}
+        channelName={selectedChat}
+        channelTopic={currentChannelInfo?.topic}
+        channelType={currentChannelInfo?.type || "text"}
+        isPrivate={!!currentChannelInfo?.locked || !!lockedChats[selectedChat]}
+        currentUserId={user?.id || profile?.id || ""}
+        currentUserName={profile?.fullName || profile?.username || user?.email || "User"}
+        channelMessages={messagesByChannel[selectedChat] || []}
+        onUpdateChannelInfo={(updated) => {
+          // Update channel in local state
+          setChannels((prev) =>
+            prev.map((c) => (c.name === selectedChat ? { ...c, topic: updated.topic, locked: updated.isPrivate } : c))
+          );
+        }}
+        onLeaveChannel={() => {
+          const remaining = channels.filter((c) => c.name !== selectedChat);
+          if (remaining.length > 0) {
+            setSelectedChat(remaining[0].name);
+          }
+        }}
+      />
+
       {/* Authentication Dialog */}
       <AuthDialog
         isOpen={isAuthOpen}
         defaultMode={authMode}
         onClose={() => setIsAuthOpen(false)}
         onSuccessLogin={handleEnterWorkspace}
+      />
+
+      {/* Ephemeral View Once & Timer-Based Media Upload Modal */}
+      <EphemeralUploadModal
+        isOpen={isEphemeralModalOpen}
+        onClose={() => {
+          setIsEphemeralModalOpen(false);
+          setEphemeralModalFile(null);
+        }}
+        file={ephemeralModalFile}
+        onSend={handleSendEphemeralMedia}
+      />
+
+      {/* Telegram-Style Storage & Cache Management Modal */}
+      <StorageManagementDialog
+        isOpen={isStorageOpen}
+        onClose={() => setIsStorageOpen(false)}
+        channels={channels}
+        directMessages={directMessages}
+        messagesByChannel={messagesByChannel}
+      />
+
+      {/* WhatsApp / Telegram-Style Expansive Media & Document Preview Dialog */}
+      <MediaPreviewDialog
+        isOpen={isMediaPreviewOpen && attachedFiles.length > 0}
+        files={attachedFiles}
+        onClose={() => setIsMediaPreviewOpen(false)}
+        initialMode={ephemeralMode}
+        initialTimerSeconds={ephemeralTimerSeconds}
+        onAddMoreFiles={() => fileInputRef.current?.click()}
+        onRemoveFile={handleRemoveAttachedFile}
+        onSend={async (data) => {
+          const { files, viewMode, timerSeconds, caption } = data;
+          setAttachedFiles([]);
+          setIsMediaPreviewOpen(false);
+
+          for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const itemCaption = i === 0 ? caption : "";
+            await handleSendEphemeralMedia({
+              file,
+              viewMode,
+              timerSeconds,
+              caption: itemCaption,
+            });
+          }
+        }}
       />
     </div>
   );
